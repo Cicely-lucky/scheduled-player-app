@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'pages/home_page.dart';
 import 'scheduler/scheduler.dart';
 
+/// 全局导航 key（通知点击后跳转播放页）
+final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -14,6 +17,8 @@ Future<void> main() async {
   // 初始化失败只影响后台定时触发，不影响 App 正常打开使用
   try {
     await AndroidAlarmManager.initialize();
+    // 注入全局导航（通知点击后跳播放页）
+    Scheduler.navKey = navKey;
     // 处理"由全屏通知启动"：记录待执行任务，交给首页消费
     Scheduler.pendingTaskId = await Scheduler.handleLaunchPayload();
     await Scheduler.init();
@@ -30,6 +35,7 @@ class ScheduledPlayerApp extends StatelessWidget {
     return MaterialApp(
       title: '定时播放',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,

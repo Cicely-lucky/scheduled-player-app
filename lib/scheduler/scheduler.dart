@@ -1,9 +1,11 @@
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/task.dart';
 import '../storage/task_store.dart';
+import '../widgets/player_page.dart';
 
 /// 全屏通知插件单例（后台闹钟 isolate 中也用它发全屏提醒）
 final FlutterLocalNotificationsPlugin notifications =
@@ -28,6 +30,9 @@ class Scheduler {
   /// 由全屏通知拉起 App 时，待执行的任务 id（HomePage 启动时消费）
   static int? pendingTaskId;
 
+  /// 全局导航 key（通知点击后跳转播放页用），由 main 注入
+  static GlobalKey<NavigatorState>? navKey;
+
   /// 通知渠道 id
   static const String _channelId = 'alarm_channel';
 
@@ -51,7 +56,10 @@ class Scheduler {
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     const init = InitializationSettings(android: androidInit);
     try {
-      await notifications.initialize(init);
+      await notifications.initialize(
+        init,
+        onDidReceiveNotificationResponse: onNotificationTap,
+      );
     } catch (_) {
       // 重复初始化失败静默
     }
@@ -113,19 +121,44 @@ class Scheduler {
     await scheduleNext();
   }
 
-  /// 执行任务：
-  /// - url：后台直接尝试打开浏览器（App 进程存活/前台时成功）；
-  ///   失败则弹全屏提醒，用户点击后由 App 代为打开。
-  /// - file：播放需要界面，弹全屏提醒，点击进入播放页。
+  /// 执行任务（后台 isolate）：
+  /// 安卓 10+ 禁止后台启动 Activity/浏览器（尤其 MIUI），
+  /// 后台直接 launchUrl 会被系统静默拦截（B站链接打不开的根因）。
+  /// 因此一律弹全屏提醒，用户点击后在【前台】执行（executeTaskById）。
   static Future<void> _execute(PlayTask t) async {
     if (t.ct == 'url') {
-      final opened = await _tryOpenUrl(t.url);
-      if (!opened) {
-        await _showAlarm(t, '定时任务「${t.name}」已到点，点击打开网址');
-      }
+      await _showAlarm(t, '定时任务「${t.name}」已到点，点击打开网址');
     } else {
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击开始播放');
     }
+  }
+
+  /// 前台执行任务（通知点击 / 首页消费统一入口）：
+  /// - url：前台打开浏览器（无后台启动限制，100% 成功）
+  /// - file：进入播放页
+  static Future<void> executeTaskById(int id) async {
+    final tasks = await TaskStore.load();
+    for (final t in tasks) {
+      if (t.id != id) continue;
+      if (t.ct == 'url') {
+        await _tryOpenUrl(t.url);
+      } else {
+        final ctx = navKey?.currentContext;
+        if (ctx != null) {
+          Navigator.push(
+              ctx, MaterialPageRoute(builder: (_) => PlayerPage(task: t)));
+        }
+      }
+      return;
+    }
+  }
+
+  /// 通知点击回调（App 存活/前台时点击通知同样触发，避免任务丢失）
+  static void onNotificationTap(NotificationResponse res) {
+    final payload = res.payload;
+    if (payload == null || !payload.startsWith('play_task_')) return;
+    final id = int.tryParse(payload.substring('play_task_'.length));
+    if (id != null) executeTaskById(id);
   }
 
   static Future<bool> _tryOpenUrl(String url) async {

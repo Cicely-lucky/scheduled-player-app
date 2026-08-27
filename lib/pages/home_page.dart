@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/task.dart';
 import '../scheduler/scheduler.dart';
 import '../storage/task_store.dart';
-import '../widgets/player_page.dart';
 import 'create_page.dart';
 import 'detail_page.dart';
 
@@ -40,24 +38,12 @@ class _HomePageState extends State<HomePage> {
     _consumePending();
   }
 
-  /// 处理全屏通知点击带来的待执行任务：
-  /// - url 任务：直接打开浏览器
-  /// - file 任务：进入播放页播放
+  /// 消费"由全屏通知拉起"的待执行任务（统一走前台执行入口）
   void _consumePending() {
     final id = Scheduler.pendingTaskId;
     if (id == null) return;
     Scheduler.pendingTaskId = null;
-    for (final t in _tasks) {
-      if (t.id != id) continue;
-      if (t.ct == 'url') {
-        final uri = Uri.tryParse(t.url);
-        if (uri != null) launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        Navigator.push(
-            context, MaterialPageRoute(builder: (_) => PlayerPage(task: t)));
-      }
-      return;
-    }
+    Scheduler.executeTaskById(id);
   }
 
   Future<void> _toggleEnabled(PlayTask t, bool v) async {
