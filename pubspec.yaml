@@ -12,7 +12,7 @@ dependencies:
   # 任务持久化
   shared_preferences: ^2.2.2
   # 后台定时调度（Android WorkManager，最小周期 15 分钟）
-  workmanager: ^0.5.2
+  workmanager: ^0.6.2
   # 打开网址
   url_launcher: ^6.2.5
   # 音频播放（本地文件 / 网络流）

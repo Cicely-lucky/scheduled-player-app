@@ -28,6 +28,12 @@ jobs:
           flutter create --platforms=android --project-name scheduled_player_app .
           rm -rf test
 
+      - name: 提升 compileSdk 到 35（部分插件要求）
+        run: |
+          sed -i -E 's/(compileSdk(Version)?)( =)? flutter\.compileSdkVersion/\1\2 = 35/' android/app/build.gradle
+          sed -i -E 's/(compileSdk(Version)?)( =)? flutter\.compileSdkVersion/\1\2 = 35/' android/app/build.gradle.kts 2>/dev/null || true
+          grep -rn 'compileSdk' android/app/ || true
+
       - name: 安装依赖
         run: flutter pub get
 
