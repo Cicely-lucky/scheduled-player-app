@@ -1,0 +1,41 @@
+name: Build APK
+
+# 云端打包：把代码推到 GitHub 后自动构建出安卓安装包（APK）
+# 触发方式：
+#   1. 推送到 main 分支自动触发
+#   2. 手动触发：仓库 Actions 页面 → 选中本工作流 → Run workflow
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.24.x'
+          cache: true
+
+      - name: 生成安卓脚手架（保留自定义的 AndroidManifest.xml）
+        run: |
+          flutter create --platforms=android --project-name scheduled_player_app .
+          rm -rf test
+
+      - name: 安装依赖
+        run: flutter pub get
+
+      - name: 构建 Release APK
+        run: flutter build apk --release
+
+      - name: 上传 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
