@@ -262,21 +262,24 @@ class _PlayerPageState extends State<PlayerPage> {
                     ],
                   ),
                 )
-              else if (!_initFailed)
+              else
                 Padding(
                   padding: const EdgeInsets.only(bottom: 32),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      IconButton(
-                        iconSize: 30,
-                        color: Colors.white70,
-                        icon: Icon(_playing
-                            ? Icons.pause_circle_outline
-                            : Icons.play_circle_outline),
-                        onPressed: _togglePause,
-                      ),
-                      const SizedBox(width: 40),
+                      // 播放失败时隐藏暂停按钮，但停止按钮必须可用
+                      if (!_initFailed) ...[
+                        IconButton(
+                          iconSize: 30,
+                          color: Colors.white70,
+                          icon: Icon(_playing
+                              ? Icons.pause_circle_outline
+                              : Icons.play_circle_outline),
+                          onPressed: _togglePause,
+                        ),
+                        const SizedBox(width: 40),
+                      ],
                       IconButton(
                         iconSize: 34,
                         color: const Color(0xFFFCA5A5),
