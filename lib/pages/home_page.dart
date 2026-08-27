@@ -258,7 +258,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      t.stopDesc,
+                      t.stopDesc + (t.mute ? ' · 静音提醒' : ''),
                       style: TextStyle(
                           fontSize: 12, color: Colors.grey.shade500),
                     ),

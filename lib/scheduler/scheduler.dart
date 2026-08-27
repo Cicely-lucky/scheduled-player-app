@@ -35,6 +35,7 @@ class Scheduler {
 
   /// 通知渠道 id
   static const String _channelId = 'alarm_channel';
+  static const String _muteChannelId = 'alarm_channel_mute';
 
   /// App 启动时初始化：通知渠道 + Android 13+ 通知权限 + 首次调度
   static Future<void> init() async {
@@ -171,25 +172,29 @@ class Scheduler {
     }
   }
 
-  /// 全屏通知（闹钟样式）：全屏弹出，点击携带 payload 拉起 App
+  /// 全屏通知（闹钟样式）：全屏弹出，点击携带 payload 拉起 App。
+  /// [mute] 为 true 时走静音渠道：只亮屏弹提醒，不响铃不震动。
   static Future<void> _showAlarm(PlayTask t, String body) async {
-    const details = AndroidNotificationDetails(
-      _channelId,
-      '定时任务提醒',
-      channelDescription: '定时任务到点提醒',
+    final mute = t.mute;
+    // 渠道声音属性在创建后不可变，响铃/静音拆两个渠道按需切换
+    final details = AndroidNotificationDetails(
+      mute ? _muteChannelId : _channelId,
+      mute ? '定时任务提醒（静音）' : '定时任务提醒',
+      channelDescription: mute ? '到点只亮屏提醒，不响铃不震动' : '定时任务到点提醒',
       importance: Importance.max,
       priority: Priority.high,
       category: AndroidNotificationCategory.alarm,
       fullScreenIntent: true,
       visibility: NotificationVisibility.public,
-      playSound: true,
+      playSound: !mute,
+      enableVibration: !mute,
     );
     try {
       await notifications.show(
         t.id, // 通知 id 复用任务 id，同日重复任务自动去重
         '定时播放',
         body,
-        const NotificationDetails(android: details),
+        NotificationDetails(android: details),
         payload: 'play_task_${t.id}',
       );
     } catch (_) {

@@ -32,6 +32,7 @@ class _CreatePageState extends State<CreatePage> {
   late int _dur;
   late bool _lockEnabled;
   late int _lock;
+  late bool _mute;
 
   bool get _isEdit => widget.initial != null;
 
@@ -53,6 +54,7 @@ class _CreatePageState extends State<CreatePage> {
     _dur = i?.dur ?? 30;
     _lockEnabled = i?.lockEnabled ?? false;
     _lock = i?.lock ?? 10;
+    _mute = i?.mute ?? false;
   }
 
   static const _weekNames = ['一', '二', '三', '四', '五', '六', '日'];
@@ -165,6 +167,7 @@ class _CreatePageState extends State<CreatePage> {
       dur: _dur,
       lockEnabled: _lockEnabled,
       lock: _lock,
+      mute: _mute,
     );
     Navigator.pop(context, task);
   }
@@ -298,6 +301,31 @@ class _CreatePageState extends State<CreatePage> {
                     onTap: () => setState(() => _auto = 'time'),
                   ),
                   const Divider(height: 24),
+                  Row(
+                    children: [
+                      const Icon(Icons.volume_off,
+                          size: 18, color: Colors.blueGrey),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text('静音提醒',
+                            style: TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600)),
+                      ),
+                      Switch(
+                        value: _mute,
+                        onChanged: (v) => setState(() => _mute = v),
+                      ),
+                    ],
+                  ),
+                  if (_mute) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '到点只亮屏弹提醒，不响铃不震动（默认响铃提醒）',
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey.shade600),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       const Icon(Icons.lock_outline, size: 18, color: Colors.amber),

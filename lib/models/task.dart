@@ -25,6 +25,7 @@ class PlayTask {
   int dur; // 播放分钟
   bool lockEnabled; // 是否启用锁定
   int lock; // 锁定分钟
+  bool mute; // 静音提醒：到点只亮屏弹提醒，不响铃不震动
 
   PlayTask({
     required this.id,
@@ -43,6 +44,7 @@ class PlayTask {
     this.dur = 30,
     this.lockEnabled = false,
     this.lock = 10,
+    this.mute = false,
   });
 
   /// 频次的中文描述，如 "每天" / "每周一、三、五" / "2026-09-01"
@@ -134,6 +136,7 @@ class PlayTask {
         'dur': dur,
         'lockEnabled': lockEnabled,
         'lock': lock,
+        'mute': mute,
       };
 
   factory PlayTask.fromJson(Map<String, dynamic> j) => PlayTask(
@@ -153,6 +156,7 @@ class PlayTask {
         dur: j['dur'] ?? 30,
         lockEnabled: j['lockEnabled'] ?? false,
         lock: j['lock'] ?? 10,
+        mute: j['mute'] ?? false,
       );
 
   static String _hm(DateTime d) =>
