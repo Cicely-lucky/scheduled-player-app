@@ -19,9 +19,11 @@ Future<void> main() async {
     await AndroidAlarmManager.initialize();
     // 注入全局导航（通知点击后跳播放页）
     Scheduler.navKey = navKey;
-    // 处理"由全屏通知启动"：记录待执行任务，交给首页消费
-    Scheduler.pendingTaskId = await Scheduler.handleLaunchPayload();
     await Scheduler.init();
+    // 处理"由全屏通知启动"：记录待执行任务，交给首页消费。
+    // 必须放在 Scheduler.init() 之后：通知插件要先初始化，
+    // 否则 getNotificationAppLaunchDetails 可能抛异常并中断首次调度。
+    Scheduler.pendingTaskId = await Scheduler.handleLaunchPayload();
   } catch (e) {
     debugPrint('定时调度初始化失败（不影响主界面）: $e');
   }

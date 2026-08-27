@@ -104,11 +104,23 @@ class Scheduler {
     final dayKey = _ymd(now);
     final tasks = await TaskStore.load();
 
-    // 找出当前时刻应触发且当日未触发过的任务
+    // 容错窗口：闹钟实际触发时刻可能有几秒到几分钟的系统偏差
+    // （提前/延后触发、系统合并唤醒、进程冷启动耗时），回溯最近
+    // 5 分钟内的每个分钟时刻逐一匹配，避免"闹钟 16:46:59 触发但
+    // 任务设的是 16:47"这类跨分钟偏差导致任务被永久跳过。
+    // wasTriggered 按天去重，不会重复触发。
     final due = <PlayTask>[];
     for (final t in tasks) {
       if (!t.enabled) continue;
-      if (!t.shouldRunAt(now)) continue;
+      bool hit = false;
+      for (var back = 0; back <= 5 && !hit; back++) {
+        final m = now.subtract(Duration(minutes: back));
+        if (t.shouldRunAt(m)) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) continue;
       if (await TaskStore.wasTriggered(t.id, dayKey)) continue;
       due.add(t);
     }
