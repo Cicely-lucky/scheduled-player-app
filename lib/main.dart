@@ -16,15 +16,21 @@ void callbackDispatcher() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化后台任务：每 15 分钟检查一次是否有到期任务
-  await Workmanager().initialize(callbackDispatcher);
-  await Workmanager().registerPeriodicTask(
-    'scheduled-player-check',
-    'checkTasks',
-    frequency: const Duration(minutes: 15),
-  );
-
+  // 先启动界面，避免后台调度初始化失败导致 App 闪退
   runApp(const ScheduledPlayerApp());
+
+  // 后台任务初始化：每 15 分钟检查一次是否有到期任务
+  // 初始化失败只影响后台定时触发，不影响 App 正常打开使用
+  try {
+    await Workmanager().initialize(callbackDispatcher);
+    await Workmanager().registerPeriodicTask(
+      'scheduled-player-check',
+      'checkTasks',
+      frequency: const Duration(minutes: 15),
+    );
+  } catch (e) {
+    debugPrint('后台调度初始化失败（不影响主界面）: $e');
+  }
 }
 
 class ScheduledPlayerApp extends StatelessWidget {
