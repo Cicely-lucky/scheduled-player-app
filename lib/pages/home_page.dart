@@ -89,9 +89,14 @@ class _HomePageState extends State<HomePage> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          await Navigator.push(
+          // 接收新建页返回的任务并持久化（CreatePage 只负责表单，不写存储）
+          final task = await Navigator.push<PlayTask>(
               context, MaterialPageRoute(builder: (_) => const CreatePage()));
-          _reload();
+          if (task != null) {
+            _tasks.add(task);
+            await TaskStore.save(_tasks);
+            setState(() {});
+          }
         },
         icon: const Icon(Icons.add),
         label: const Text('新建任务'),
