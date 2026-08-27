@@ -39,12 +39,13 @@ jobs:
           python3 - <<'EOF'
           p = 'android/app/build.gradle'
           s = open(p).read()
-          # 在 compileOptions 内启用 desugaring
-          s = s.replace(
-              'targetCompatibility = JavaVersion.VERSION_1_8',
-              'targetCompatibility = JavaVersion.VERSION_1_8\n        coreLibraryDesugaringEnabled true')
-          # 追加 desugar 依赖
-          if 'coreLibraryDesugaring' not in s:
+          # 1) 在 compileOptions 内启用 desugaring（仅当尚未启用时）
+          if 'coreLibraryDesugaringEnabled' not in s:
+              s = s.replace(
+                  'targetCompatibility = JavaVersion.VERSION_1_8',
+                  'targetCompatibility = JavaVersion.VERSION_1_8\n        coreLibraryDesugaringEnabled true')
+          # 2) 追加 desugar 依赖（判断条件用 desugar_jdk_libs，避免与上面的开关关键词混淆）
+          if 'desugar_jdk_libs' not in s:
               s += "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
           open(p, 'w').write(s)
           print('--- desugaring config ---')
