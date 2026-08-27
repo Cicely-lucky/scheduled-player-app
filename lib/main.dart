@@ -22,7 +22,6 @@ Future<void> main() async {
     'scheduled-player-check',
     'checkTasks',
     frequency: const Duration(minutes: 15),
-    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
   );
 
   runApp(const ScheduledPlayerApp());
