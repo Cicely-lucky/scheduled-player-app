@@ -1,35 +1,24 @@
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:workmanager/workmanager.dart';
 
 import 'pages/home_page.dart';
 import 'scheduler/scheduler.dart';
 
-/// workmanager 后台回调入口（必须为顶层函数）
-@pragma('vm:entry-point')
-void callbackDispatcher() {
-  Workmanager().executeTask((task, inputData) async {
-    await Scheduler.runCheck();
-    return true;
-  });
-}
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 先启动界面，避免后台调度初始化失败导致 App 闪退
+  // 先启动界面，避免调度初始化失败导致 App 闪退
   runApp(const ScheduledPlayerApp());
 
-  // 后台任务初始化：每 15 分钟检查一次是否有到期任务
+  // 精确闹钟初始化：注册回调 + 通知渠道 + 首次调度
   // 初始化失败只影响后台定时触发，不影响 App 正常打开使用
   try {
-    await Workmanager().initialize(callbackDispatcher);
-    await Workmanager().registerPeriodicTask(
-      'scheduled-player-check',
-      'checkTasks',
-      frequency: const Duration(minutes: 15),
-    );
+    await AndroidAlarmManager.initialize();
+    // 处理"由全屏通知启动"：记录待执行任务，交给首页消费
+    Scheduler.pendingTaskId = await Scheduler.handleLaunchPayload();
+    await Scheduler.init();
   } catch (e) {
-    debugPrint('后台调度初始化失败（不影响主界面）: $e');
+    debugPrint('定时调度初始化失败（不影响主界面）: $e');
   }
 }
 

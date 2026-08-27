@@ -34,6 +34,23 @@ jobs:
           sed -i -E 's/(compileSdk(Version)?)( =)? flutter\.compileSdkVersion/\1\2 = 35/' android/app/build.gradle.kts 2>/dev/null || true
           grep -rn 'compileSdk' android/app/ || true
 
+      - name: 启用 core library desugaring（flutter_local_notifications 要求）
+        run: |
+          python3 - <<'EOF'
+          p = 'android/app/build.gradle'
+          s = open(p).read()
+          # 在 compileOptions 内启用 desugaring
+          s = s.replace(
+              'targetCompatibility = JavaVersion.VERSION_1_8',
+              'targetCompatibility = JavaVersion.VERSION_1_8\n        coreLibraryDesugaringEnabled true')
+          # 追加 desugar 依赖
+          if 'coreLibraryDesugaring' not in s:
+              s += "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'\n}\n"
+          open(p, 'w').write(s)
+          print('--- desugaring config ---')
+          print(open(p).read())
+          EOF
+
       - name: 安装依赖
         run: flutter pub get
 

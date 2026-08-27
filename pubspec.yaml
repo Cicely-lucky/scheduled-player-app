@@ -11,8 +11,10 @@ dependencies:
     sdk: flutter
   # 任务持久化
   shared_preferences: ^2.2.2
-  # 后台定时调度（Android WorkManager，最小周期 15 分钟）
-  workmanager: ^0.7.0
+  # 精确闹钟调度（Android AlarmManager，准点触发、熄屏也唤醒）
+  android_alarm_manager_plus: ^4.0.4
+  # 全屏通知（到点弹出提醒，点击拉起 App 执行任务）
+  flutter_local_notifications: ^17.2.2
   # 打开网址
   url_launcher: ^6.2.5
   # 音频播放（本地文件 / 网络流）

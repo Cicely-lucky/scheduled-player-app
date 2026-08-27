@@ -12,25 +12,31 @@
     <!-- 前台服务播放媒体 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
-    <!-- Android 12+ 精确闹钟（可选：用于更精确的定时触发） -->
+    <!-- 精确闹钟：Android 12+ 免授权直接授予（仅闹钟/日历类 App 可声明） -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- Android 12+ 精确闹钟（兜底：部分 ROM 走此权限） -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- 全屏通知（Android 14+ 弹全屏提醒需要） -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
 
     <application
         android:label="定时播放"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
-        <!-- workmanager 后台任务初始化：禁用 androidx 默认初始化，改由 Dart 层手动调用（官方推荐配置） -->
-        <provider
-            android:name="androidx.startup.InitializationProvider"
-            android:authorities="${applicationId}.androidx-startup"
-            android:exported="false"
-            tools:node="merge">
-            <meta-data
-                android:name="androidx.work.WorkManagerInitializer"
-                android:value="androidx.startup"
-                tools:node="remove"/>
-        </provider>
+        <!-- 精确闹钟（android_alarm_manager_plus）-->
+        <receiver
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"
+            android:exported="false"/>
+        <!-- 重启后恢复闹钟 -->
+        <receiver
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
+            android:enabled="false"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
 
         <activity
             android:name=".MainActivity"
