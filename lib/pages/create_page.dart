@@ -3,32 +3,57 @@ import 'package:flutter/material.dart';
 
 import '../models/task.dart';
 
-/// 新建任务页：所有选项一次性展示，与 HTML Demo 交互一致
+/// 新建/编辑任务页：所有选项一次性展示，与 HTML Demo 交互一致
+///
+/// [initial] 为空时是新建模式；非空时是编辑模式（表单预填，保存保留原 id）
 class CreatePage extends StatefulWidget {
-  const CreatePage({super.key});
+  final PlayTask? initial;
+  const CreatePage({super.key, this.initial});
 
   @override
   State<CreatePage> createState() => _CreatePageState();
 }
 
 class _CreatePageState extends State<CreatePage> {
-  final _nameCtrl = TextEditingController();
+  late final TextEditingController _nameCtrl;
 
-  String _time = '08:00';
-  String _freq = 'daily';
-  final Set<int> _days = {1, 2, 3, 4, 5};
-  String _date = '';
+  late String _time;
+  late String _freq;
+  late Set<int> _days;
+  late String _date;
 
-  String _ct = 'url';
-  String _url = '';
-  String _fileName = '';
-  bool _isVideo = false;
+  late String _ct;
+  late String _url;
+  late String _fileName;
+  late bool _isVideo;
 
-  String _auto = 'loop';
-  int _loop = 1;
-  int _dur = 30;
-  bool _lockEnabled = false;
-  int _lock = 10;
+  late String _auto;
+  late int _loop;
+  late int _dur;
+  late bool _lockEnabled;
+  late int _lock;
+
+  bool get _isEdit => widget.initial != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final i = widget.initial;
+    _nameCtrl = TextEditingController(text: i?.name ?? '');
+    _time = i?.time ?? '08:00';
+    _freq = i?.freq ?? 'daily';
+    _days = Set.of(i?.days.isNotEmpty == true ? i!.days : const {1, 2, 3, 4, 5});
+    _date = i?.date ?? '';
+    _ct = i?.ct ?? 'url';
+    _url = i?.url ?? '';
+    _fileName = i?.fileName ?? '';
+    _isVideo = i?.isVideo ?? false;
+    _auto = i?.auto ?? 'loop';
+    _loop = i?.loop ?? 1;
+    _dur = i?.dur ?? 30;
+    _lockEnabled = i?.lockEnabled ?? false;
+    _lock = i?.lock ?? 10;
+  }
 
   static const _weekNames = ['一', '二', '三', '四', '五', '六', '日'];
   static const _videoExts = ['mp4', 'mov', 'mkv', 'webm', 'm4v'];
@@ -124,7 +149,8 @@ class _CreatePageState extends State<CreatePage> {
       return;
     }
     final task = PlayTask(
-      id: DateTime.now().millisecondsSinceEpoch,
+      // 编辑模式保留原 id（保证启停状态、触发记录不丢），新建用毫秒时间戳
+      id: widget.initial?.id ?? DateTime.now().millisecondsSinceEpoch,
       name: name,
       freq: _freq,
       days: Set.of(_days),
@@ -153,7 +179,7 @@ class _CreatePageState extends State<CreatePage> {
     lockVal.addListener(() => _lock = lockVal.value);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('新建任务')),
+      appBar: AppBar(title: Text(_isEdit ? '编辑任务' : '新建任务')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 100),
         children: [

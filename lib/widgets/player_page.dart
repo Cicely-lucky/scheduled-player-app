@@ -32,6 +32,7 @@ class _PlayerPageState extends State<PlayerPage> {
   bool _playing = true;
   bool _unlocked = false;
   bool _initFailed = false;
+  bool _autoStopping = false; // 自动停止/自然停止放行返回，锁定只拦手动退出
 
   @override
   void initState() {
@@ -122,6 +123,7 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _stop({required bool autoStop}) {
+    _autoStopping = true; // 放行 PopScope，自动停止/自然停止不受锁定限制
     _timer?.cancel();
     _audio?.stop();
     _video?.pause();
@@ -166,120 +168,127 @@ class _PlayerPageState extends State<PlayerPage> {
   Widget build(BuildContext context) {
     final locked = t.lockEnabled && !_unlocked;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // 顶部信息
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.keyboard_arrow_down,
-                        color: Colors.white70, size: 28),
-                    onPressed: () => Navigator.pop(context),
-                    tooltip: '收起',
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      t.name,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (t.isVideo)
-                    const Icon(Icons.videocam, color: Colors.white54, size: 18)
-                  else
-                    const Icon(Icons.audiotrack, color: Colors.white54, size: 18),
-                ],
-              ),
-            ),
-            const Spacer(),
-            // 视频区域
-            if (t.isVideo && _video != null && _video!.value.isInitialized)
+    return PopScope(
+      // 锁定期间拦截系统返回键（手动退出）；自动/自然停止时放行
+      canPop: !locked || _autoStopping,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // 顶部信息
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: AspectRatio(
-                    aspectRatio: _video!.value.aspectRatio,
-                    child: VideoPlayer(_video!),
-                  ),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Row(
+                  children: [
+                    if (locked)
+                      const SizedBox(width: 48) // 锁定期间隐藏收起按钮，保持标题对齐
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.keyboard_arrow_down,
+                            color: Colors.white70, size: 28),
+                        onPressed: () => Navigator.pop(context),
+                        tooltip: '收起',
+                      ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        t.name,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (t.isVideo)
+                      const Icon(Icons.videocam, color: Colors.white54, size: 18)
+                    else
+                      const Icon(Icons.audiotrack, color: Colors.white54, size: 18),
+                  ],
                 ),
               ),
-            if (t.isVideo)
-              const SizedBox(height: 24)
-            else
+              const Spacer(),
+              // 视频区域
+              if (t.isVideo && _video != null && _video!.value.isInitialized)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: AspectRatio(
+                      aspectRatio: _video!.value.aspectRatio,
+                      child: VideoPlayer(_video!),
+                    ),
+                  ),
+                ),
+              if (t.isVideo)
+                const SizedBox(height: 24)
+              else
+                const SizedBox(height: 8),
+              // 大计时
+              Text(
+                _fmtTime,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 56,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                t.ct == 'url' ? '打开网址' : (t.isVideo ? '播放视频' : '播放音频'),
+                style: const TextStyle(color: Colors.white38, fontSize: 13),
+              ),
+              const Spacer(),
+              // 锁定徽标 / 控制按钮
+              if (locked)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 40),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.lock, color: Colors.amber, size: 14),
+                      const SizedBox(width: 6),
+                      Text(
+                        '剩余 $_lockRemain 后可停止',
+                        style: const TextStyle(
+                            color: Colors.amber, fontSize: 12.5),
+                      ),
+                    ],
+                  ),
+                )
+              else if (!_initFailed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 32),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        iconSize: 30,
+                        color: Colors.white70,
+                        icon: Icon(_playing
+                            ? Icons.pause_circle_outline
+                            : Icons.play_circle_outline),
+                        onPressed: _togglePause,
+                      ),
+                      const SizedBox(width: 40),
+                      IconButton(
+                        iconSize: 34,
+                        color: const Color(0xFFFCA5A5),
+                        icon: const Icon(Icons.stop_circle_outlined),
+                        onPressed: () => _stop(autoStop: false),
+                      ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 8),
-            // 大计时
-            Text(
-              _fmtTime,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 56,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              t.ct == 'url' ? '打开网址' : (t.isVideo ? '播放视频' : '播放音频'),
-              style: const TextStyle(color: Colors.white38, fontSize: 13),
-            ),
-            const Spacer(),
-            // 锁定徽标 / 控制按钮
-            if (locked)
-              Container(
-                margin: const EdgeInsets.only(bottom: 40),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.lock, color: Colors.amber, size: 14),
-                    const SizedBox(width: 6),
-                    Text(
-                      '剩余 $_lockRemain 后可停止',
-                      style: const TextStyle(
-                          color: Colors.amber, fontSize: 12.5),
-                    ),
-                  ],
-                ),
-              )
-            else if (!_initFailed)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 32),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      iconSize: 30,
-                      color: Colors.white70,
-                      icon: Icon(_playing
-                          ? Icons.pause_circle_outline
-                          : Icons.play_circle_outline),
-                      onPressed: _togglePause,
-                    ),
-                    const SizedBox(width: 40),
-                    IconButton(
-                      iconSize: 34,
-                      color: const Color(0xFFFCA5A5),
-                      icon: const Icon(Icons.stop_circle_outlined),
-                      onPressed: () => _stop(autoStop: false),
-                    ),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 8),
-          ],
+            ],
+          ),
         ),
       ),
     );

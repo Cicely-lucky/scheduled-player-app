@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../storage/task_store.dart';
 import '../widgets/player_page.dart';
+import 'create_page.dart';
 
-/// 任务详情页：汇总所有配置，支持立即播放与删除
+/// 任务详情页：汇总所有配置，支持编辑、立即播放与删除
 class DetailPage extends StatefulWidget {
   final PlayTask task;
   const DetailPage({super.key, required this.task});
@@ -21,6 +22,22 @@ class _DetailPageState extends State<DetailPage> {
     tasks.removeWhere((e) => e.id == _t.id);
     await TaskStore.save(tasks);
     if (mounted) Navigator.pop(context);
+  }
+
+  /// 进入编辑页，保存后原地更新详情与存储（保留原 id）
+  Future<void> _edit() async {
+    final updated = await Navigator.push<PlayTask>(
+      context,
+      MaterialPageRoute(builder: (_) => CreatePage(initial: _t)),
+    );
+    if (updated == null) return;
+    final tasks = await TaskStore.load();
+    final idx = tasks.indexWhere((e) => e.id == _t.id);
+    if (idx >= 0) {
+      tasks[idx] = updated;
+      await TaskStore.save(tasks);
+    }
+    if (mounted) setState(() => _t = updated);
   }
 
   void _confirmDelete() {
@@ -141,10 +158,20 @@ class _DetailPageState extends State<DetailPage> {
                     side: const BorderSide(color: Colors.red),
                   ),
                   icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('删除任务'),
+                  label: const Text('删除'),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _edit,
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46)),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('编辑'),
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
                   onPressed: _play,
