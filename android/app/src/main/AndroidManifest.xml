@@ -20,7 +20,7 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
-        <!-- workmanager 后台任务初始化（必须配置，否则周期任务不生效） -->
+        <!-- workmanager 后台任务初始化：禁用 androidx 默认初始化，改由 Dart 层手动调用（官方推荐配置） -->
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
@@ -30,15 +30,6 @@
                 android:name="androidx.work.WorkManagerInitializer"
                 android:value="androidx.startup"
                 tools:node="remove"/>
-        </provider>
-        <provider
-            android:name="com.transistorsoft.workmanager.WorkManagerInitializer"
-            android:authorities="${applicationId}.workmanager-init"
-            android:exported="false"
-            tools:node="merge">
-            <meta-data
-                android:name="androidx.work.WorkManagerInitializer"
-                android:value="androidx.startup"/>
         </provider>
 
         <activity
