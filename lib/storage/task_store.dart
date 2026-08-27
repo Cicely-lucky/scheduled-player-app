@@ -12,6 +12,14 @@ class TaskStore {
   /// 读取全部任务
   static Future<List<PlayTask>> load() async {
     final prefs = await SharedPreferences.getInstance();
+    // 关键修复：闹钟回调运行在后台独立 isolate，其 SharedPreferences
+    // 内存缓存可能是旧数据（看不到主界面新建的任务）。reload() 强制
+    // 从磁盘重读，保证每次都拿到最新任务列表。
+    try {
+      await prefs.reload();
+    } catch (_) {
+      // 个别平台不支持 reload，忽略后仍按缓存读取
+    }
     final raw = prefs.getString(_key);
     if (raw == null || raw.isEmpty) return [];
     try {

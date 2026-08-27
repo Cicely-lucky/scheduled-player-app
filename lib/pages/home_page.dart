@@ -27,7 +27,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _reload() async {
     final tasks = await TaskStore.load();
     // 任务有任何变化（增删改/启停）后重新计算下一次触发并精确调度
-    Scheduler.scheduleNext();
+    await Scheduler.scheduleNext();
     if (mounted) {
       setState(() {
         _tasks = tasks;
@@ -36,6 +36,15 @@ class _HomePageState extends State<HomePage> {
     }
     // 消费"由全屏通知拉起"的待执行任务（此时 _tasks 已就绪）
     _consumePending();
+  }
+
+  /// 保存任务并立即重新注册闹钟。
+  /// 关键修复：此前新建/启停/删除后未重新调度，
+  /// 闹钟从未注册到系统，导致"设置的任务不生效"。
+  Future<void> _saveAndReschedule() async {
+    await TaskStore.save(_tasks);
+    await Scheduler.scheduleNext();
+    if (mounted) setState(() {});
   }
 
   /// 消费"由全屏通知拉起"的待执行任务（统一走前台执行入口）
@@ -48,14 +57,12 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _toggleEnabled(PlayTask t, bool v) async {
     t.enabled = v;
-    await TaskStore.save(_tasks);
-    setState(() {});
+    await _saveAndReschedule();
   }
 
   Future<void> _delete(PlayTask t) async {
     _tasks.removeWhere((e) => e.id == t.id);
-    await TaskStore.save(_tasks);
-    setState(() {});
+    await _saveAndReschedule();
   }
 
   /// 计算最近一个将触发的任务
@@ -106,8 +113,8 @@ class _HomePageState extends State<HomePage> {
               context, MaterialPageRoute(builder: (_) => const CreatePage()));
           if (task != null) {
             _tasks.add(task);
-            await TaskStore.save(_tasks);
-            setState(() {});
+            // 关键：保存后立即注册闹钟（此前缺失，任务保存了但闹钟从未生效）
+            await _saveAndReschedule();
           }
         },
         icon: const Icon(Icons.add),
@@ -175,6 +182,22 @@ class _HomePageState extends State<HomePage> {
                   Text(
                     next == null ? '暂无排程' : _nextDesc(next),
                     style: const TextStyle(fontSize: 13.5, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 3),
+                  // 调度状态：直接显示闹钟注册结果（成功/失败及原因）
+                  Row(
+                    children: [
+                      Icon(Icons.schedule, size: 12, color: Colors.indigo.shade300),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          Scheduler.status,
+                          style: TextStyle(
+                              fontSize: 11.5, color: Colors.indigo.shade300),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

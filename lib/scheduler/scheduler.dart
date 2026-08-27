@@ -37,6 +37,11 @@ class Scheduler {
   static const String _channelId = 'alarm_channel';
   static const String _muteChannelId = 'alarm_channel_mute';
 
+  /// 调度状态（主 isolate 更新，首页展示）：
+  /// 让用户直接看到"闹钟是否注册成功、注册到几点"，
+  /// 出错也不再静默，方便定位"定时不生效"问题。
+  static String status = '未调度';
+
   /// App 启动时初始化：通知渠道 + Android 13+ 通知权限 + 首次调度
   static Future<void> init() async {
     await _initNotifications();
@@ -81,57 +86,80 @@ class Scheduler {
   /// 重新调度最近一个触发点。
   /// 任务新建/编辑/删除/启停后调用（home_page 刷新时自动执行）。
   static Future<void> scheduleNext() async {
-    final tasks = await TaskStore.load();
-    final next = _nextTrigger(DateTime.now(), tasks);
-    if (next == null) return;
-    await AndroidAlarmManager.oneShotAt(
-      next,
-      _alarmId,
-      scheduledPlayerCheck,
-      exact: true, // setExactAndAllowWhileIdle：准点触发、Doze 省电也唤醒
-      wakeup: true, // RTC_WAKEUP：熄屏时唤醒设备
-      allowWhileIdle: true,
-      rescheduleOnReboot: true, // 重启后自动恢复闹钟
-    );
+    try {
+      final tasks = await TaskStore.load();
+      final next = _nextTrigger(DateTime.now(), tasks);
+      if (next == null) {
+        status = '没有待触发的任务';
+        return;
+      }
+      await AndroidAlarmManager.oneShotAt(
+        next,
+        _alarmId,
+        scheduledPlayerCheck,
+        exact: true, // setExactAndAllowWhileIdle：准点触发、Doze 省电也唤醒
+        wakeup: true, // RTC_WAKEUP：熄屏时唤醒设备
+        allowWhileIdle: true,
+        rescheduleOnReboot: true, // 重启后自动恢复闹钟
+      );
+      status = '闹钟已注册：${_fmt(next)} 准点触发';
+      debugPrint('SP-Alarm scheduleNext -> $_fmt(next)');
+    } catch (e) {
+      // 调度失败不再静默：记录到状态并打日志（logcat 过滤 SP-Alarm）
+      status = '调度失败：$e';
+      debugPrint('SP-Alarm scheduleNext error: $e');
+    }
   }
+
+  static String _fmt(DateTime d) =>
+      '${d.month}/${d.day} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
   /// 闹钟到点回调（后台 isolate 执行）
   @pragma('vm:entry-point')
   static Future<void> check() async {
-    // 后台 isolate 是独立环境，重新初始化通知插件（幂等）
-    await _ensureNotifications();
-    final now = DateTime.now();
-    final dayKey = _ymd(now);
-    final tasks = await TaskStore.load();
+    // 后台 isolate 中任何异常都会让回调静默死亡（表现为"到点无反应"），
+    // 整体 try/catch 并打日志，logcat 过滤 SP-Alarm 即可看到全过程。
+    try {
+      debugPrint('SP-Alarm check fired');
+      // 后台 isolate 是独立环境，重新初始化通知插件（幂等）
+      await _ensureNotifications();
+      final now = DateTime.now();
+      final dayKey = _ymd(now);
+      final tasks = await TaskStore.load();
+      debugPrint('SP-Alarm tasks loaded: ${tasks.length}');
 
-    // 容错窗口：闹钟实际触发时刻可能有几秒到几分钟的系统偏差
-    // （提前/延后触发、系统合并唤醒、进程冷启动耗时），回溯最近
-    // 5 分钟内的每个分钟时刻逐一匹配，避免"闹钟 16:46:59 触发但
-    // 任务设的是 16:47"这类跨分钟偏差导致任务被永久跳过。
-    // wasTriggered 按天去重，不会重复触发。
-    final due = <PlayTask>[];
-    for (final t in tasks) {
-      if (!t.enabled) continue;
-      bool hit = false;
-      for (var back = 0; back <= 5 && !hit; back++) {
-        final m = now.subtract(Duration(minutes: back));
-        if (t.shouldRunAt(m)) {
-          hit = true;
-          break;
+      // 容错窗口：闹钟实际触发时刻可能有几秒到几分钟的系统偏差
+      // （提前/延后触发、系统合并唤醒、进程冷启动耗时），回溯最近
+      // 5 分钟内的每个分钟时刻逐一匹配，避免"闹钟 16:46:59 触发但
+      // 任务设的是 16:47"这类跨分钟偏差导致任务被永久跳过。
+      // wasTriggered 按天去重，不会重复触发。
+      final due = <PlayTask>[];
+      for (final t in tasks) {
+        if (!t.enabled) continue;
+        bool hit = false;
+        for (var back = 0; back <= 5 && !hit; back++) {
+          final m = now.subtract(Duration(minutes: back));
+          if (t.shouldRunAt(m)) {
+            hit = true;
+            break;
+          }
         }
+        if (!hit) continue;
+        if (await TaskStore.wasTriggered(t.id, dayKey)) continue;
+        due.add(t);
       }
-      if (!hit) continue;
-      if (await TaskStore.wasTriggered(t.id, dayKey)) continue;
-      due.add(t);
-    }
+      debugPrint('SP-Alarm due tasks: ${due.length}');
 
-    for (final t in due) {
-      await TaskStore.markTriggered(t.id, dayKey);
-      await _execute(t);
-    }
+      for (final t in due) {
+        await TaskStore.markTriggered(t.id, dayKey);
+        await _execute(t);
+      }
 
-    // 无论是否触发，都重新调度下一次
-    await scheduleNext();
+      // 无论是否触发，都重新调度下一次
+      await scheduleNext();
+    } catch (e) {
+      debugPrint('SP-Alarm check error: $e');
+    }
   }
 
   /// 执行任务（后台 isolate）：
