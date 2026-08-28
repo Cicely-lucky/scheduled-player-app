@@ -258,6 +258,11 @@ class Scheduler {
     }
   }
 
+  /// 通知 id 必须是 32 位 int（Android 系统限制），而任务 id 是毫秒
+  /// 时间戳（64 位）。哈希折叠到 31 位正整数；同一任务哈希稳定，
+  /// 重复发通知时仍会覆盖旧通知。
+  static int _notifId(int taskId) => taskId.hashCode & 0x7FFFFFFF;
+
   /// 全屏通知（闹钟样式）：全屏弹出，点击携带 payload 拉起 App。
   /// [mute] 为 true 时走静音渠道：只亮屏弹提醒，不响铃不震动。
   static Future<void> _showAlarm(PlayTask t, String body) async {
@@ -278,7 +283,8 @@ class Scheduler {
     try {
       debugPrint('SP-Alarm showing notification (task ${t.id}, mute=$mute)');
       await notifications.show(
-        t.id, // 通知 id 复用任务 id，同日重复任务自动去重
+        _notifId(t.id), // 通知 id：任务 id 哈希成 32 位（Android 限制），
+        // 此前直接用 64 位毫秒时间戳导致 Invalid argument 异常，通知从未发出
         '定时播放',
         body,
         NotificationDetails(android: details),
