@@ -28,6 +28,13 @@
         <receiver
             android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"
             android:exported="false"/>
+        <!-- 关键：闹钟触发后由 AlarmService（JobService）启动 Flutter 后台引擎执行回调。
+             官方文档要求在 App 清单声明；此前缺失导致每次闹钟触发即崩溃：
+             "Tried to schedule job for non-existent component: .../g4.a" -->
+        <service
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
         <!-- 重启后恢复闹钟 -->
         <receiver
             android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
