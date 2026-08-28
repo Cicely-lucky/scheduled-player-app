@@ -22,6 +22,10 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _reload();
+    // 通知自检在启动后约 3 秒完成，延迟刷新让首页状态行显示结果
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _reload() async {
@@ -183,6 +187,35 @@ class _HomePageState extends State<HomePage> {
                     next == null ? '暂无排程' : _nextDesc(next),
                     style: const TextStyle(fontSize: 13.5, color: Colors.black87),
                   ),
+                  const SizedBox(height: 3),
+                  // 通知链路自检结果：绿色=通过；红色=失败（附原因），
+                  // 失败说明"到点弹不出提醒"的断点在通知环节
+                  if (Scheduler.notifSelfTest.isNotEmpty)
+                    Row(
+                      children: [
+                        Icon(
+                          Scheduler.notifSelfTest.contains('失败')
+                              ? Icons.error_outline
+                              : Icons.check_circle_outline,
+                          size: 12,
+                          color: Scheduler.notifSelfTest.contains('失败')
+                              ? Colors.red.shade400
+                              : Colors.green.shade600,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            Scheduler.notifSelfTest,
+                            style: TextStyle(
+                                fontSize: 11.5,
+                                color: Scheduler.notifSelfTest.contains('失败')
+                                    ? Colors.red.shade400
+                                    : Colors.green.shade600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 3),
                   // 调度状态：直接显示闹钟注册结果（成功/失败及原因）
                   Row(

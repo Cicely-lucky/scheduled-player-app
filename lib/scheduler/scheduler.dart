@@ -42,10 +42,54 @@ class Scheduler {
   /// 出错也不再静默，方便定位"定时不生效"问题。
   static String status = '未调度';
 
-  /// App 启动时初始化：通知渠道 + Android 13+ 通知权限 + 首次调度
+  /// 通知链路自检结果（App 启动时在主 isolate 里实测一次发通知，
+  /// 结果显示在首页）：闹钟触发后最终靠通知提醒用户，这条链路
+  /// 是否正常直接决定"到点有没有反应"。
+  static String notifSelfTest = '';
+
+  /// 自检通知的 id（与任务 id 空间区分开）
+  static const int _selfTestId = 999999;
+
+  /// App 启动时初始化：通知渠道 + Android 13+ 通知权限 + 通知自检 + 首次调度
   static Future<void> init() async {
     await _initNotifications();
+    await _selfTestNotifications();
     await scheduleNext();
+  }
+
+  /// 前台通知自检：启动时用与闹钟提醒相同的渠道发一条测试通知，
+  /// 3 秒后自动撤掉。成功与否写入 [notifSelfTest] 并打日志。
+  /// 之前"闹钟响了但毫无反应"的根因是通知在原生层静默失败
+  /// （错误被 Dart 端 catch 吞掉），自检让这类问题当场暴露。
+  static Future<void> _selfTestNotifications() async {
+    try {
+      const details = AndroidNotificationDetails(
+        _channelId,
+        '定时任务提醒',
+        channelDescription: '定时任务到点提醒',
+        importance: Importance.max,
+        priority: Priority.high,
+        category: AndroidNotificationCategory.alarm,
+        visibility: NotificationVisibility.public,
+      );
+      await notifications.show(
+        _selfTestId,
+        '通知自检',
+        '通知通道正常，3 秒后自动消失',
+        const NotificationDetails(android: details),
+      );
+      notifSelfTest = '通知自检通过';
+      debugPrint('SP-Alarm self-test passed');
+      // 3 秒后自动撤掉自检通知（避免停留在状态栏）
+      Future.delayed(const Duration(seconds: 3), () async {
+        try {
+          await notifications.cancel(_selfTestId);
+        } catch (_) {}
+      });
+    } catch (e) {
+      notifSelfTest = '通知自检失败：$e';
+      debugPrint('SP-Alarm self-test error: $e');
+    }
   }
 
   static Future<void> _initNotifications() async {
@@ -66,8 +110,10 @@ class Scheduler {
         init,
         onDidReceiveNotificationResponse: onNotificationTap,
       );
-    } catch (_) {
-      // 重复初始化失败静默
+    } catch (e) {
+      // 重复初始化可忽略，但其他错误必须打日志（后台 isolate 是否能初始化
+      // 通知插件直接决定"到点有没有提醒"）
+      debugPrint('SP-Alarm notif init error: $e');
     }
   }
 
@@ -230,6 +276,7 @@ class Scheduler {
       enableVibration: !mute,
     );
     try {
+      debugPrint('SP-Alarm showing notification (task ${t.id}, mute=$mute)');
       await notifications.show(
         t.id, // 通知 id 复用任务 id，同日重复任务自动去重
         '定时播放',
@@ -237,8 +284,11 @@ class Scheduler {
         NotificationDetails(android: details),
         payload: 'play_task_${t.id}',
       );
-    } catch (_) {
-      // 通知发送失败静默（如权限未授予）
+      debugPrint('SP-Alarm notification shown (task ${t.id})');
+    } catch (e) {
+      // 通知发送失败绝不再静默：这里是"闹钟响了但毫无反应"的
+      // 断点所在（如 invalid_icon / 通知权限被拒等原生错误）
+      debugPrint('SP-Alarm show error: $e');
     }
   }
 

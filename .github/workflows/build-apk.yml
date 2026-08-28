@@ -52,6 +52,32 @@ jobs:
           print(open(p).read())
           EOF
 
+      - name: 关闭代码混淆与资源压缩（防止通知资源被改名导致通知静默失败）
+        run: |
+          python3 - <<'EOF'
+          p = 'android/app/build.gradle'
+          s = open(p).read()
+          # 在文件末尾追加覆盖配置：release 构建不做代码混淆/资源压缩。
+          # 原因：资源压缩器会把 @mipmap/ic_launcher 等资源改名，
+          # flutter_local_notifications 按名字查图标会返回 0，
+          # 通知静默失败（官方 README 明确警告过此坑）。
+          # 个人自用 App，包体变大无所谓，稳定性优先。
+          if 'minifyEnabled' not in s:
+              s += (
+                  "\nandroid {\n"
+                  "    buildTypes {\n"
+                  "        release {\n"
+                  "            minifyEnabled false\n"
+                  "            shrinkResources false\n"
+                  "        }\n"
+                  "    }\n"
+                  "}\n"
+              )
+          open(p, 'w').write(s)
+          print('--- tail of build.gradle ---')
+          print(s[-400:])
+          EOF
+
       - name: 安装依赖
         run: flutter pub get
 
