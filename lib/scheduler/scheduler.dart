@@ -143,7 +143,11 @@ class Scheduler {
         next,
         _alarmId,
         scheduledPlayerCheck,
-        exact: true, // setExactAndAllowWhileIdle：准点触发、Doze 省电也唤醒
+        // setAlarmClock：与系统时钟同级的"用户闹钟"，MIUI GreezeManager
+        // 不敢扣（setExact 会被 cached alarm! 挂起，扣到进程解冻才补投）。
+        // 代价是状态栏会显示闹钟图标——正好提醒用户"定时已生效"。
+        alarmClock: true,
+        exact: true, // 准点触发、Doze 省电也唤醒
         wakeup: true, // RTC_WAKEUP：熄屏时唤醒设备
         allowWhileIdle: true,
         rescheduleOnReboot: true, // 重启后自动恢复闹钟
