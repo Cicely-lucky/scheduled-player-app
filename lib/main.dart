@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/material.dart';
 
@@ -10,23 +12,25 @@ final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 先启动界面，避免调度初始化失败导致 App 闪退
-  runApp(const ScheduledPlayerApp());
-
-  // 精确闹钟初始化：注册回调 + 通知渠道 + 首次调度
-  // 初始化失败只影响后台定时触发，不影响 App 正常打开使用
+  // runApp 之前完成两件轻量初始化（各几十毫秒，不阻塞首帧）：
+  // 1. 闹钟插件注册回调；
+  // 2. 通知插件初始化并取出"点击通知冷启动"的待执行任务。
+  //    必须在 runApp 前：首页 initState 里就会消费 pendingTaskId，
+  //    若赋值晚于首页构建，点通知冷启动的任务会被静默丢弃。
+  // 完整初始化（权限/自检/首次调度）放在 runApp 之后后台执行，
+  // 即使失败也不影响 App 正常打开使用。
   try {
     await AndroidAlarmManager.initialize();
-    // 注入全局导航（通知点击后跳播放页）
     Scheduler.navKey = navKey;
-    await Scheduler.init();
-    // 处理"由全屏通知启动"：记录待执行任务，交给首页消费。
-    // 必须放在 Scheduler.init() 之后：通知插件要先初始化，
-    // 否则 getNotificationAppLaunchDetails 可能抛异常并中断首次调度。
-    Scheduler.pendingTaskId = await Scheduler.handleLaunchPayload();
+    Scheduler.pendingTaskId = await Scheduler.prepareLaunch();
   } catch (e) {
     debugPrint('定时调度初始化失败（不影响主界面）: $e');
   }
+
+  runApp(const ScheduledPlayerApp());
+
+  // 通知渠道 + 权限 + 自检 + 首次调度（幂等，失败只影响后台触发）
+  unawaited(Scheduler.init());
 }
 
 class ScheduledPlayerApp extends StatelessWidget {

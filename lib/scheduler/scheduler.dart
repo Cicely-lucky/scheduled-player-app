@@ -50,6 +50,18 @@ class Scheduler {
   /// 自检通知的 id（与任务 id 空间区分开）
   static const int _selfTestId = 999999;
 
+  /// App 启动早期调用（main 的 runApp 之前）：
+  /// 轻量初始化通知插件，取出"点击通知冷启动 App"的待执行任务 id。
+  ///
+  /// 关键修复：此前 pendingTaskId 在 runApp 之后的异步流程里才赋值，
+  /// 首页 initState/_reload 往往先执行完 _consumePending（此时拿到
+  /// null），用户点击通知冷启动 App 后任务被静默丢弃。
+  /// 通知插件初始化仅几十毫秒，放在 runApp 前不会阻塞首帧。
+  static Future<int?> prepareLaunch() async {
+    await _ensureNotifications();
+    return handleLaunchPayload();
+  }
+
   /// App 启动时初始化：通知渠道 + Android 13+ 通知权限 + 通知自检 + 首次调度
   static Future<void> init() async {
     await _initNotifications();
@@ -136,6 +148,14 @@ class Scheduler {
       final tasks = await TaskStore.load();
       final next = _nextTrigger(DateTime.now(), tasks);
       if (next == null) {
+        // 任务全部删除/停用后必须取消已注册的闹钟：
+        // 否则状态栏残留闹钟图标（alarmClock 样式），到点还会空跑一次回调
+        try {
+          await AndroidAlarmManager.cancel(_alarmId);
+          debugPrint('SP-Alarm cancelled (no due tasks)');
+        } catch (e) {
+          debugPrint('SP-Alarm cancel error: $e');
+        }
         status = '没有待触发的任务';
         return;
       }

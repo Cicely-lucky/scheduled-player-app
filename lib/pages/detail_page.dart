@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/task.dart';
+import '../scheduler/scheduler.dart';
 import '../storage/task_store.dart';
 import '../widgets/player_page.dart';
 import 'create_page.dart';
@@ -21,6 +22,9 @@ class _DetailPageState extends State<DetailPage> {
     final tasks = await TaskStore.load();
     tasks.removeWhere((e) => e.id == _t.id);
     await TaskStore.save(tasks);
+    // 删除后立即重新调度：不等回到首页才刷新。
+    // 若删的是"下一个任务"，闹钟要立刻改期/取消，避免到点空跑
+    await Scheduler.scheduleNext();
     if (mounted) Navigator.pop(context);
   }
 
@@ -37,6 +41,9 @@ class _DetailPageState extends State<DetailPage> {
       tasks[idx] = updated;
       await TaskStore.save(tasks);
     }
+    // 编辑（改时间/频次/启停）后立即重新调度：
+    // 旧闹钟还注册在原时间，必须马上改到新时间
+    await Scheduler.scheduleNext();
     if (mounted) setState(() => _t = updated);
   }
 
@@ -140,6 +147,8 @@ class _DetailPageState extends State<DetailPage> {
                 tasks[idx].enabled = v;
                 await TaskStore.save(tasks);
               }
+              // 启停直接影响下一次触发点，立即重新调度
+              await Scheduler.scheduleNext();
             },
           ),
         ],
