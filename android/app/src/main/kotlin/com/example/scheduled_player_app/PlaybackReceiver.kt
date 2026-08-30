@@ -15,14 +15,42 @@ import android.util.Log
  * 而显式广播（同 App、exported=false）不受任何系统限制；
  * 精确闹钟触发后 App 处于临时白名单窗口，此处允许启动前台服务。
  *
- * 另处理 OPEN_URL：到点直接拉起 B 站/浏览器（临时白名单窗口内允许
- * 后台启动 Activity，与闹钟 App 弹响铃界面同机制）。MIUI 需用户开启
- * "后台弹出界面"权限，否则会被 ROM 拦截（日志可见）。
+ * 另处理三种 action：
+ * - OPEN_URL：到点打开网址。两条来源——①UrlAlarmScheduler 注册的原生
+ *   闹钟（BAL 直达链路，startActivity 不被拦截）②Dart 回调的二次广播
+ *   （备份，可能被 BAL 拦截）。60 秒内同 url 去重防双开。
+ * - SYNC_URL_ALARMS：全量同步网址任务的原生闹钟（JSON 列表）。
+ * - PLAYBACK_START：拉起 PlaybackService 前台服务播放音频。
  */
 class PlaybackReceiver : BroadcastReceiver() {
 
+    companion object {
+        /** 进程级去重：url → 上次成功发起 startActivity 的 elapsedRealtime */
+        private val lastOpenAt = HashMap<String, Long>()
+        private const val OPEN_DEDUP_MS = 60_000L
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         Log.d("SP-Alarm", "receiver got broadcast, action=${intent.action}, path=${intent.getStringExtra("path")}")
+
+        // 全量同步网址任务的原生闹钟（Dart 主/后台 isolate 均可发）
+        if (intent.action == "com.example.scheduled_player_app.SYNC_URL_ALARMS") {
+            val json = intent.getStringExtra("alarms") ?: "[]"
+            val items = try {
+                val arr = org.json.JSONArray(json)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    UrlAlarmScheduler.Item(
+                        o.getInt("id"), o.getLong("at"), o.getString("url")
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("SP-Alarm", "SYNC_URL_ALARMS parse error: $e")
+                emptyList()
+            }
+            UrlAlarmScheduler.sync(context, items)
+            return
+        }
 
         // 网址任务：到点直接打开（B 站 App / 浏览器）
         if (intent.action == "com.example.scheduled_player_app.OPEN_URL") {
@@ -34,8 +62,20 @@ class PlaybackReceiver : BroadcastReceiver() {
             // 用户常从 B 站 App 分享复制"【标题】 https://b23.tv/xxx"整段文字，
             // 直接 Uri.parse 整段会 ActivityNotFoundException；先提取纯网址
             val url = extractUrl(raw)
+            val fromNativeAlarm = intent.getBooleanExtra("from_native_alarm", false)
             Log.d("SP-Alarm", "OPEN_URL raw=$raw")
-            Log.d("SP-Alarm", "OPEN_URL extracted=$url")
+            Log.d("SP-Alarm", "OPEN_URL extracted=$url, fromNativeAlarm=$fromNativeAlarm")
+
+            // 双通道去重：原生闹钟和 Dart 二次广播都会到达，
+            // 60 秒内同 url 只打开一次（后者通常被 BAL 拦截，无感知）
+            val now = android.os.SystemClock.elapsedRealtime()
+            val last = lastOpenAt[url]
+            if (last != null && now - last < OPEN_DEDUP_MS) {
+                Log.d("SP-Alarm", "OPEN_URL skip (opened ${now - last}ms ago)")
+                return
+            }
+            lastOpenAt[url] = now
+
             try {
                 val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

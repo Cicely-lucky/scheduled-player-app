@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
@@ -147,7 +149,12 @@ class Scheduler {
   static Future<void> scheduleNext() async {
     try {
       final tasks = await TaskStore.load();
-      final next = _nextTrigger(DateTime.now(), tasks);
+      final now = DateTime.now();
+      // 网址任务走原生闹钟 BAL 直达链路（Android 14+ 二次广播会被
+      // Background Activity Launch 策略静默拦截，必须由闹钟广播直接
+      // 唤起 receiver 才能合法后台启动 Activity）
+      await _syncUrlAlarms(tasks, now);
+      final next = _nextTrigger(now, tasks);
       if (next == null) {
         // 任务全部删除/停用后必须取消已注册的闹钟：
         // 否则状态栏残留闹钟图标（alarmClock 样式），到点还会空跑一次回调
@@ -243,9 +250,9 @@ class Scheduler {
   /// 执行任务（后台 isolate）：
   /// - 音频文件任务（非静音）：拉起原生前台服务直接后台开播，无需点击通知，
   ///   亮屏使用中/锁屏/熄屏均生效（与闹钟 App 到点响铃同机制）
-  /// - 网址任务（B 站等）：到点直接拉起对应 App/浏览器（闹钟临时白名单
-  ///   窗口允许后台启动 Activity），MIUI 需开"后台弹出界面"权限；
-  ///   广播发送异常时退回通知点击方案
+  /// - 网址任务（B 站等）：主通道是 UrlAlarmScheduler 注册的原生闹钟
+  ///   （BAL 直达，到点直接拉起 App/浏览器）；此处二次广播仅作备份，
+  ///   Android 14+ 可能被 BAL 策略静默拦截（receiver 侧 60 秒去重防双开）
   /// - 视频/静音任务：系统硬限制无法后台自动播，弹提醒，
   ///   用户点击后在【前台】执行（executeTaskById）
   static Future<void> _execute(PlayTask t) async {
@@ -266,6 +273,41 @@ class Scheduler {
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击打开网址');
     } else {
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击开始播放');
+    }
+  }
+
+  /// 同步网址任务的原生闹钟（全量：新增/刷新/取消）。
+  ///
+  /// 通过显式广播下发 JSON 列表给 PlaybackReceiver → UrlAlarmScheduler：
+  /// - 广播方式主 isolate / 后台 isolate 都能发（MethodChannel 在后台
+  ///   isolate 的引擎上没有注册 handler，不可用）；
+  /// - 原生侧持久化已注册 id，差异取消失效闹钟；
+  /// - 每个闹钟用 setAlarmClock + PendingIntent(BAL allowed) 注册，
+  ///   到点 receiver 作为闹钟直接接收者可合法后台 startActivity。
+  static Future<void> _syncUrlAlarms(List<PlayTask> tasks, DateTime now) async {
+    try {
+      final list = <Map<String, dynamic>>[];
+      for (final t in tasks) {
+        if (!t.enabled || t.ct != 'url') continue;
+        final at = t.nextRunAt(now);
+        if (at == null) continue;
+        list.add({
+          'id': _notifId(t.id),
+          'at': at.millisecondsSinceEpoch,
+          'url': t.url,
+        });
+      }
+      final intent = AndroidIntent(
+        action: 'com.example.scheduled_player_app.SYNC_URL_ALARMS',
+        package: 'com.example.scheduled_player_app',
+        // 必须用完整类名（插件原生端不展开 .ClassName 缩写）
+        componentName: 'com.example.scheduled_player_app.PlaybackReceiver',
+        arguments: <String, dynamic>{'alarms': jsonEncode(list)},
+      );
+      await intent.sendBroadcast();
+      debugPrint('SP-Alarm url alarms synced: ${list.length}');
+    } catch (e) {
+      debugPrint('SP-Alarm url alarm sync error: $e');
     }
   }
 
