@@ -45,6 +45,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- 后台自动播放：闹钟回调（Dart）发显式广播 → Receiver 拉起前台服务直接开播，
+             无需点击通知（亮屏使用中/锁屏/熄屏均生效） -->
+        <receiver
+            android:name=".PlaybackReceiver"
+            android:exported="false"/>
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

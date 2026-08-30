@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/task.dart';
 
@@ -101,10 +104,29 @@ class _CreatePageState extends State<CreatePage> {
     );
     if (result != null && result.files.single.path != null) {
       final f = result.files.single;
+      // 复制到应用文档目录长期保存：file_picker 返回的是缓存路径，
+      // 会被系统/MIUI"清理缓存"删除，导致后台定时播放时源文件丢失
+      final saved = await _persistFile(f.path!, f.name);
       setState(() {
-        _fileName = f.path!;
+        _fileName = saved ?? f.path!;
         _isVideo = _videoExts.contains((f.extension ?? '').toLowerCase());
       });
+    }
+  }
+
+  /// 把选中的媒体文件复制到文档目录 media/ 下，返回新路径；失败返回 null
+  /// （失败时退回缓存路径，播放仍可用，只是抗清理能力弱）
+  Future<String?> _persistFile(String src, String name) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final mediaDir = Directory('${dir.path}/media');
+      if (!mediaDir.existsSync()) mediaDir.createSync(recursive: true);
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final dest = '${mediaDir.path}/$stamp-$name';
+      await File(src).copy(dest);
+      return dest;
+    } catch (_) {
+      return null;
     }
   }
 

@@ -1,4 +1,5 @@
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -233,14 +234,51 @@ class Scheduler {
   }
 
   /// 执行任务（后台 isolate）：
-  /// 安卓 10+ 禁止后台启动 Activity/浏览器（尤其 MIUI），
-  /// 后台直接 launchUrl 会被系统静默拦截（B站链接打不开的根因）。
-  /// 因此一律弹全屏提醒，用户点击后在【前台】执行（executeTaskById）。
+  /// - 音频文件任务（非静音）：拉起原生前台服务直接后台开播，无需点击通知，
+  ///   亮屏使用中/锁屏/熄屏均生效（与闹钟 App 到点响铃同机制）
+  /// - 网址/视频/静音任务：安卓 10+ 禁止后台启动 Activity/浏览器（尤其 MIUI），
+  ///   弹全屏提醒，用户点击后在【前台】执行（executeTaskById）
   static Future<void> _execute(PlayTask t) async {
+    if (t.ct == 'file' && !t.isVideo && !t.mute) {
+      if (await _startBackgroundPlayback(t)) {
+        debugPrint('SP-Alarm background playback started (task ${t.id})');
+        return; // 已自动开播，不再弹"点击播放"通知
+      }
+      // 广播失败兜底：退回通知点击方案
+    }
     if (t.ct == 'url') {
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击打开网址');
     } else {
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击开始播放');
+    }
+  }
+
+  /// 后台自动播放（音频文件任务）：
+  /// 通过显式广播拉起原生前台服务（PlaybackService）用 MediaPlayer 开播。
+  /// 精确闹钟（setAlarmClock）触发后 App 处于临时白名单窗口，
+  /// 此时从后台启动前台服务是系统允许的豁免场景。
+  static Future<bool> _startBackgroundPlayback(PlayTask t) async {
+    try {
+      final intent = AndroidIntent(
+        action: 'com.example.scheduled_player_app.PLAYBACK_START',
+        package: 'com.example.scheduled_player_app',
+        // 注意：必须用完整类名。插件原生端 new ComponentName(pkg, cls)
+        // 不支持 ".ClassName" 缩写展开，缩写会导致广播找不到接收器
+        componentName: 'com.example.scheduled_player_app.PlaybackReceiver',
+        arguments: <String, dynamic>{
+          'path': t.fileName,
+          'title': t.name,
+          // loop=0 表示不按次数停止（由 durMin 时长控制）
+          'loop': t.auto == 'loop' ? t.loop : 0,
+          'durMin': t.auto == 'time' ? t.dur : 0,
+          'lockMin': t.lockEnabled ? t.lock : 0,
+        },
+      );
+      await intent.sendBroadcast();
+      return true;
+    } catch (e) {
+      debugPrint('SP-Alarm playback broadcast error: $e');
+      return false;
     }
   }
 

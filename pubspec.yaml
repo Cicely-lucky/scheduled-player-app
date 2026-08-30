@@ -23,6 +23,10 @@ dependencies:
   video_player: ^2.8.3
   # 选择导入音视频文件
   file_picker: ^8.0.0
+  # 发显式广播拉起原生前台服务（后台自动播放）
+  android_intent_plus: ^4.0.3
+  # 导入的媒体文件复制到文档目录（防缓存被清理后定时播放失败）
+  path_provider: ^2.1.0
 
 dev_dependencies:
   flutter_lints: ^4.0.0
