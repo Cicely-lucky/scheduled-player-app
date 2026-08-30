@@ -243,8 +243,11 @@ class Scheduler {
   /// 执行任务（后台 isolate）：
   /// - 音频文件任务（非静音）：拉起原生前台服务直接后台开播，无需点击通知，
   ///   亮屏使用中/锁屏/熄屏均生效（与闹钟 App 到点响铃同机制）
-  /// - 网址/视频/静音任务：安卓 10+ 禁止后台启动 Activity/浏览器（尤其 MIUI），
-  ///   弹全屏提醒，用户点击后在【前台】执行（executeTaskById）
+  /// - 网址任务（B 站等）：到点直接拉起对应 App/浏览器（闹钟临时白名单
+  ///   窗口允许后台启动 Activity），MIUI 需开"后台弹出界面"权限；
+  ///   广播发送异常时退回通知点击方案
+  /// - 视频/静音任务：系统硬限制无法后台自动播，弹提醒，
+  ///   用户点击后在【前台】执行（executeTaskById）
   static Future<void> _execute(PlayTask t) async {
     if (t.ct == 'file' && !t.isVideo && !t.mute) {
       if (await _startBackgroundPlayback(t)) {
@@ -254,9 +257,36 @@ class Scheduler {
       // 广播失败兜底：退回通知点击方案
     }
     if (t.ct == 'url') {
+      // 优先尝试到点直接拉起 B 站/浏览器（闹钟临时白名单窗口允许后台
+      // 启动 Activity）；发送广播异常才退回通知点击方案
+      if (await _startBackgroundOpenUrl(t)) {
+        debugPrint('SP-Alarm background open url started (task ${t.id})');
+        return;
+      }
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击打开网址');
     } else {
       await _showAlarm(t, '定时任务「${t.name}」已到点，点击开始播放');
+    }
+  }
+
+  /// 网址任务到点直接打开（后台启动 Activity）：
+  /// 闹钟（setAlarmClock）触发后 App 处于临时白名单窗口，此窗口内系统
+  /// 允许后台启动 Activity——与闹钟 App 弹响铃界面同机制。
+  /// 注意：广播发送成功不代表 startActivity 成功（异步），MIUI 需开启
+  /// "后台弹出界面"权限，失败可在 logcat 过滤 SP-Alarm 定位。
+  static Future<bool> _startBackgroundOpenUrl(PlayTask t) async {
+    try {
+      final intent = AndroidIntent(
+        action: 'com.example.scheduled_player_app.OPEN_URL',
+        package: 'com.example.scheduled_player_app',
+        componentName: 'com.example.scheduled_player_app.PlaybackReceiver',
+        arguments: <String, dynamic>{'url': t.url},
+      );
+      await intent.sendBroadcast();
+      return true;
+    } catch (e) {
+      debugPrint('SP-Alarm open url broadcast error: $e');
+      return false;
     }
   }
 

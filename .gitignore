@@ -11,3 +11,4 @@ get-apk.bat
 get-log.bat
 get-crash.bat
 check_syntax.py
+runs_check.json
