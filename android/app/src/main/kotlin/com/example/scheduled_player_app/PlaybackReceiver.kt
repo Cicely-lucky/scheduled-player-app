@@ -3,6 +3,7 @@ package com.example.scheduled_player_app
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 /**
  * 后台自动播放的桥接接收器：
@@ -16,16 +17,21 @@ import android.content.Intent
 class PlaybackReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        Log.d("SP-Alarm", "receiver got broadcast, action=${intent.action}, path=${intent.getStringExtra("path")}")
         val service = Intent(context, PlaybackService::class.java)
         // 转发全部 extras（path/title/loop/durMin/lockMin）
         service.putExtras(intent)
         try {
             context.startForegroundService(service)
-        } catch (_: Exception) {
+            Log.d("SP-Alarm", "startForegroundService ok")
+        } catch (e: Exception) {
             // 极端 ROM 限制下的兜底（可能被系统拒绝，Dart 侧还有通知方案兜底）
+            Log.e("SP-Alarm", "startForegroundService failed: $e")
             try {
                 context.startService(service)
-            } catch (_: Exception) {
+                Log.d("SP-Alarm", "startService (fallback) ok")
+            } catch (e2: Exception) {
+                Log.e("SP-Alarm", "startService fallback failed: $e2")
             }
         }
     }

@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 
 /**
  * 后台自动播放前台服务：
@@ -54,9 +55,11 @@ class PlaybackService : Service() {
 
         val path = intent?.getStringExtra(EXTRA_PATH)
         if (path.isNullOrEmpty()) {
+            Log.e("SP-Alarm", "service started but path is empty/null")
             stopSelf()
             return START_NOT_STICKY
         }
+        Log.d("SP-Alarm", "service onStartCommand, path=$path")
 
         title = intent.getStringExtra(EXTRA_TITLE) ?: "定时播放"
         val durMin = intent.getIntExtra(EXTRA_DUR_MIN, 0)
@@ -106,12 +109,14 @@ class PlaybackService : Service() {
                 }
                 prepare()
                 start()
+                Log.d("SP-Alarm", "MediaPlayer playing: $path")
             }
             if (durMin > 0) {
                 handler.postDelayed({ stopPlayback() }, durMin * 60_000L)
             }
-        } catch (_: Exception) {
-            // 文件丢失/损坏等：直接静默收摊（Dart 侧有通知方案兜底）
+        } catch (e: Exception) {
+            // 文件丢失/损坏等：记录原因后收摊（Dart 侧有通知方案兜底）
+            Log.e("SP-Alarm", "MediaPlayer failed: $e")
             stopPlayback()
         }
     }

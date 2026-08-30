@@ -39,15 +39,20 @@ class TaskStore {
         _key, jsonEncode(tasks.map((t) => t.toJson()).toList()));
   }
 
-  /// 记录任务在 [dayKey]（yyyy-MM-dd）已触发过，避免重复触发
-  static Future<void> markTriggered(int taskId, String dayKey) async {
+  /// 记录任务在某个时段已触发过，避免同一时段重复触发。
+  /// [slotKey] 格式为 "yyyy-MM-dd HH:mm"（天 + 任务时刻）。
+  ///
+  /// 关键设计：去重粒度必须是"天 + 时段"而非仅"天"——
+  /// 旧版按天去重，任务当天触发过一次后，用户修改时间当天再测
+  /// 会被永久跳过（实测 13:33 到点 due:0 的根因）。
+  static Future<void> markTriggered(int taskId, String slotKey) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('$_lastTriggerPrefix$taskId', dayKey);
+    await prefs.setString('$_lastTriggerPrefix$taskId', slotKey);
   }
 
-  /// 查询任务在 [dayKey] 是否已触发过
-  static Future<bool> wasTriggered(int taskId, String dayKey) async {
+  /// 查询任务在某个时段是否已触发过
+  static Future<bool> wasTriggered(int taskId, String slotKey) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('$_lastTriggerPrefix$taskId') == dayKey;
+    return prefs.getString('$_lastTriggerPrefix$taskId') == slotKey;
   }
 }

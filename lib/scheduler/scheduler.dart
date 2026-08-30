@@ -174,7 +174,8 @@ class Scheduler {
         rescheduleOnReboot: true, // 重启后自动恢复闹钟
       );
       status = '闹钟已注册：${_fmt(next)} 准点触发';
-      debugPrint('SP-Alarm scheduleNext -> $_fmt(next)');
+      // 注意必须用 ${} 包裹函数调用：$_fmt(next) 只会打印闭包本身
+      debugPrint('SP-Alarm scheduleNext -> ${_fmt(next)}');
     } catch (e) {
       // 调度失败不再静默：记录到状态并打日志（logcat 过滤 SP-Alarm）
       status = '调度失败：$e';
@@ -203,7 +204,7 @@ class Scheduler {
       // （提前/延后触发、系统合并唤醒、进程冷启动耗时），回溯最近
       // 5 分钟内的每个分钟时刻逐一匹配，避免"闹钟 16:46:59 触发但
       // 任务设的是 16:47"这类跨分钟偏差导致任务被永久跳过。
-      // wasTriggered 按天去重，不会重复触发。
+      // 去重按"天 + 时段"（yyyy-MM-dd HH:mm），同一天改时间可再触发。
       final due = <PlayTask>[];
       for (final t in tasks) {
         if (!t.enabled) continue;
@@ -216,13 +217,19 @@ class Scheduler {
           }
         }
         if (!hit) continue;
-        if (await TaskStore.wasTriggered(t.id, dayKey)) continue;
+        // 去重粒度 = 天 + 时段。旧版仅按天去重：任务当天触发过一次后，
+        // 修改时间再测被永久跳过（实测 13:33 到点 due:0 的根因）
+        final slotKey = '$dayKey ${t.time}';
+        if (await TaskStore.wasTriggered(t.id, slotKey)) {
+          debugPrint('SP-Alarm skip (already fired at ${t.time}): task ${t.id}');
+          continue;
+        }
         due.add(t);
       }
       debugPrint('SP-Alarm due tasks: ${due.length}');
 
       for (final t in due) {
-        await TaskStore.markTriggered(t.id, dayKey);
+        await TaskStore.markTriggered(t.id, '$dayKey ${t.time}');
         await _execute(t);
       }
 
