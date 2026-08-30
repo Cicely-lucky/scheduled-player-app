@@ -1,11 +1,9 @@
 package com.example.scheduled_player_app
 
-import android.app.ActivityOptions
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
 
 /**
@@ -63,18 +61,13 @@ object UrlAlarmScheduler {
             putExtra("from_native_alarm", true)
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        // 关键：BAL 豁免必须写进 PendingIntent 本身（API 34+），
-        // 闹钟触发时系统据此允许本 App 在广播接收期间启动 Activity
-        val op: PendingIntent = if (Build.VERSION.SDK_INT >= 34) {
-            val opts = ActivityOptions.makeBasic()
-                .setPendingIntentBackgroundActivityStartMode(
-                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                )
-                .toBundle()
-            PendingIntent.getBroadcast(context, item.id, fire, flags, opts)
-        } else {
-            PendingIntent.getBroadcast(context, item.id, fire, flags)
-        }
+        // 注意：PendingIntent.getBroadcast 没有 (Context,Int,Intent,Int,Bundle)
+        // 重载——Bundle opts 仅 getActivity/getActivities 支持，上一版传了
+        // 5 个参数导致 Kotlin 编译失败（CI run 33311517826 构建失败根因）。
+        // BAL 豁免也不需要 opts：setAlarmClock 的闹钟广播【直接接收者】
+        // 自动获得后台启动 Activity 豁免（系统闹钟 App 到点弹响铃界面
+        // 正是此机制），无需 ActivityOptions 声明。
+        val op = PendingIntent.getBroadcast(context, item.id, fire, flags)
         // 状态栏闹钟图标的点击意图：回 App
         val show = PendingIntent.getActivity(
             context, item.id,
