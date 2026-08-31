@@ -25,6 +25,36 @@
          「显示悬浮窗」或 adb appops set pkg SYSTEM_ALERT_WINDOW allow。 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
+    <!-- 包可见性（Android 11+）：不声明则 resolveActivity 看不到第三方 App——
+         17:25 实测 bilibili:// 深链 resolver=null（adb shell 可解析是因为有
+         QUERY_ALL_PACKAGES），导致回退到浏览器。声明后才能命中 tv.danmaku.bili -->
+    <queries>
+        <!-- B 站深链 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="bilibili"/>
+        </intent>
+        <!-- B 站网页链接 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="www.bilibili.com"/>
+        </intent>
+        <!-- B 站短链 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https" android:host="b23.tv"/>
+        </intent>
+        <!-- 通用 http/https（浏览器兜底） -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="http"/>
+        </intent>
+    </queries>
+
     <application
         android:label="定时播放"
         android:name="${applicationName}"
@@ -61,12 +91,31 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
         <!-- 网址任务自动打开的前台服务桥：闹钟/定时器到点 → 广播 →
-             拉起本服务转前台（进程变 FOREGROUND_SERVICE，BAL 豁免）
-             → 服务内 startActivity 打开目标网址 → 1.5s 后自动收摊 -->
+             拉起本服务转前台 → 拉起 UrlBridgeActivity（锁屏可见）打开目标网址 →
+             数秒后自动收摊 -->
         <service
             android:name=".UrlBridgeService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
+
+        <!-- 锁屏可见的透明中转 Activity：由 UrlBridgeService 拉起（BAL 由悬浮窗
+             豁免放行），showWhenLocked+turnScreenOn 让它盖在锁屏之上（系统闹钟
+             同款机制），再由它打开目标 App——绕过 MIUI KeyguardLocked 拦截。
+             17:25 实测：服务直接 startActivity 目标 App 虽过 BAL 但被
+             「Permission Denied Activity KeyguardLocked」拦下（result code=102）。 -->
+        <activity
+            android:name=".UrlBridgeActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"/>
 
         <activity
             android:name=".MainActivity"
