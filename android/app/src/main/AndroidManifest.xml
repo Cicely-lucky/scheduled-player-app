@@ -54,21 +54,13 @@
             android:name=".PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
-
-        <!-- 网址任务闹钟的透明中转 Activity：原生闹钟 getActivity+opts 直启，
-             系统以用户可见方式启动（BAL 放行），onCreate 打开链接后立即 finish，
-             视觉无感。注意不能走广播链路——getBroadcast 无法 opt-in BAL。 -->
-        <activity
-            android:name=".UrlBridgeActivity"
+        <!-- 网址任务自动打开的前台服务桥：闹钟/定时器到点 → 广播 →
+             拉起本服务转前台（进程变 FOREGROUND_SERVICE，BAL 豁免）
+             → 服务内 startActivity 打开目标网址 → 1.5s 后自动收摊 -->
+        <service
+            android:name=".UrlBridgeService"
             android:exported="false"
-            android:launchMode="singleTask"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize"/>
+            android:foregroundServiceType="mediaPlayback"/>
 
         <activity
             android:name=".MainActivity"

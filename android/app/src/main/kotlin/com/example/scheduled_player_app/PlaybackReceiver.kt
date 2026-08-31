@@ -16,14 +16,15 @@ import android.util.Log
  * 精确闹钟触发后 App 处于临时白名单窗口，此处允许启动前台服务。
  *
  * 另处理三种 action：
- * - OPEN_URL：到点打开网址。主通道是 UrlBridgeActivity（原生闹钟
- *   getActivity+opts 直启，BAL 放行）；此处接收 Dart 回调的二次广播
- *   （备份，App 在前台时也能打开）。60 秒内同 url 去重防双开。
+ * - OPEN_URL：到点打开网址。统一经 UrlBridgeService 前台服务中转——
+ *   startForeground 后进程处于 FOREGROUND_SERVICE 状态（后台启动
+ *   Activity 的文档豁免场景），服务内 startActivity 不再被 BAL 拦截。
+ *   60 秒内同 url 去重防双开。
  * - SYNC_URL_ALARMS：全量同步网址任务的原生闹钟（JSON 列表）。
  * - PLAYBACK_START：拉起 PlaybackService 前台服务播放音频。
  *
  * 工具方法（extractUrlCompat / shouldOpen / showUrlFallbackNotification）
- * 设为 companion 供 UrlBridgeActivity 复用。
+ * 设为 companion 供 UrlBridgeService 复用。
  */
 class PlaybackReceiver : BroadcastReceiver() {
 
@@ -109,9 +110,11 @@ class PlaybackReceiver : BroadcastReceiver() {
             return
         }
 
-        // 网址任务：到点直接打开（B 站 App / 浏览器）
-        // 注：主通道是 UrlBridgeActivity（原生闹钟 getActivity+opts 直启，
-        // BAL 放行）；此处为 Dart 二次广播兜底，App 在前台时同样生效。
+        // 网址任务：到点打开（B 站 App / 浏览器）
+        // 统一经 UrlBridgeService 前台服务中转：广播接收者里直接 startActivity
+        // 会被 AOSP 后台启动拦截（procState=RECEIVER，BAL_BLOCK code=102，
+        // 小米 Android 16 实测）；startForegroundService 拉起前台服务后进程
+        // 处于 FOREGROUND_SERVICE 状态，服务内 startActivity 属豁免场景。
         if (intent.action == "com.example.scheduled_player_app.OPEN_URL") {
             val raw = intent.getStringExtra("url")
             if (raw.isNullOrEmpty()) {
@@ -125,26 +128,19 @@ class PlaybackReceiver : BroadcastReceiver() {
             Log.d("SP-Alarm", "OPEN_URL raw=$raw")
             Log.d("SP-Alarm", "OPEN_URL extracted=$url, fromNativeAlarm=$fromNativeAlarm")
 
-            // 双通道去重：UrlBridgeActivity 和 Dart 二次广播都会尝试打开，
-            // 60 秒内同 url 只打开一次
+            // 原生闹钟（getBroadcast）与 Dart 定时器都可能触发，60 秒内同 url 只开一次
             if (!shouldOpen(url)) {
                 Log.d("SP-Alarm", "OPEN_URL skip (opened recently)")
                 return
             }
 
             try {
-                val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (view.resolveActivity(context.packageManager) == null) {
-                    Log.e("SP-Alarm", "no activity can handle url: $url")
-                    showUrlFallbackNotification(context, url)
-                    return
-                }
-                context.startActivity(view)
-                Log.d("SP-Alarm", "startActivity ok: $url")
+                val svc = Intent(context, UrlBridgeService::class.java)
+                    .putExtra(UrlBridgeService.EXTRA_URL, url)
+                context.startForegroundService(svc)
+                Log.d("SP-Alarm", "startForegroundService(UrlBridgeService) ok")
             } catch (e: Exception) {
-                // MIUI 未开"后台弹出界面"权限等场景：日志定位，Dart 侧无法感知
-                Log.e("SP-Alarm", "startActivity failed: $e")
+                Log.e("SP-Alarm", "startForegroundService(UrlBridgeService) failed: $e")
                 showUrlFallbackNotification(context, url)
             }
             return
