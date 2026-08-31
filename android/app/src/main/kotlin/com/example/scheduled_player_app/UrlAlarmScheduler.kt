@@ -1,24 +1,29 @@
 package com.example.scheduled_player_app
 
+import android.app.ActivityOptions
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 
 /**
  * 网址任务的原生精确闹钟（BAL 直达链路）。
  *
- * 为什么需要它：Android 14+（targetSdk 34）禁止后台启动 Activity（BAL），
- * 闹钟触发的 BAL 豁免只授予闹钟广播的【直接接收者】。此前链路是
- * "闹钟 → 插件 Receiver → Dart 回调 → 二次广播 → PlaybackReceiver"，
- * 豁免在二次广播处已丢失，startActivity 被 AOSP 静默拦截
- * （日志：Background activity launch blocked, result code=102）。
+ * 为什么需要它：Android 14+（targetSdk 34）禁止后台启动 Activity（BAL）。
+ * 14:15 实测铁证：闹钟广播的直接接收者里 startActivity 仍被拦——
+ * "balRequireOptInByPendingIntentCreator=true 时
+ * resultIfPiCreatorAllowsBal=BAL_BLOCK"。getBroadcast 没有 opts 重载、
+ * 无法声明 MODE_BACKGROUND_ACTIVITY_START_ALLOWED，所以广播路径
+ * 永远无法 opt-in，receiver 内 startActivity 必被 AOSP 静默拦截。
  *
- * 本类为网址任务单独注册 setAlarmClock 闹钟，PendingIntent 直接指向
- * PlaybackReceiver，且创建时带 MODE_BACKGROUND_ACTIVITY_START_ALLOWED
- * ——与系统闹钟 App 到点弹响铃界面完全同机制，receiver 内 startActivity
- * 不再被拦截。
+ * 正确机制（与系统闹钟 App 到点弹响铃界面完全同构）：setAlarmClock 的
+ * PendingIntent 用 getActivity + opts（API 34+ 的
+ * setPendingIntentBackgroundActivityStartMode(ALLOWED)）直接指向
+ * UrlBridgeActivity——透明中转 Activity。到点系统以"用户可见"方式启动
+ * 该 Activity（BAL 放行），它在 onCreate 里打开目标网址后立即 finish，
+ * 用户感知为"到点直接弹出 B 站/浏览器"。
  *
  * 同步协议：Dart 侧（主 isolate / 后台 isolate 均可）发 SYNC_URL_ALARMS
  * 广播携带全量 JSON 列表，本端负责增删改（差异取消旧闹钟），
@@ -55,19 +60,26 @@ object UrlAlarmScheduler {
     }
 
     private fun scheduleInternal(context: Context, am: AlarmManager, item: Item) {
-        val fire = Intent(context, PlaybackReceiver::class.java).apply {
+        // 直达 UrlBridgeActivity：闹钟到点由系统以用户可见方式启动它
+        // （getActivity + opts 显式声明后台启动豁免，API 34+）。
+        // 注意：不能 getBroadcast——没有 opts 重载，无法 opt-in，
+        // receiver 内 startActivity 必被 BAL_BLOCK（14:15 实测）。
+        val fire = Intent(context, UrlBridgeActivity::class.java).apply {
             action = ACTION_OPEN
             putExtra("url", item.url)
             putExtra("from_native_alarm", true)
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        // 注意：PendingIntent.getBroadcast 没有 (Context,Int,Intent,Int,Bundle)
-        // 重载——Bundle opts 仅 getActivity/getActivities 支持，上一版传了
-        // 5 个参数导致 Kotlin 编译失败（CI run 33311517826 构建失败根因）。
-        // BAL 豁免也不需要 opts：setAlarmClock 的闹钟广播【直接接收者】
-        // 自动获得后台启动 Activity 豁免（系统闹钟 App 到点弹响铃界面
-        // 正是此机制），无需 ActivityOptions 声明。
-        val op = PendingIntent.getBroadcast(context, item.id, fire, flags)
+        val op: PendingIntent = if (Build.VERSION.SDK_INT >= 34) {
+            val opts = ActivityOptions.makeBasic()
+                .setPendingIntentBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                )
+                .toBundle()
+            PendingIntent.getActivity(context, item.id, fire, flags, opts)
+        } else {
+            PendingIntent.getActivity(context, item.id, fire, flags)
+        }
         // 状态栏闹钟图标的点击意图：回 App
         val show = PendingIntent.getActivity(
             context, item.id,
@@ -79,8 +91,8 @@ object UrlAlarmScheduler {
     }
 
     private fun cancelInternal(context: Context, am: AlarmManager, id: Int) {
-        val fire = Intent(context, PlaybackReceiver::class.java).apply { action = ACTION_OPEN }
-        val op = PendingIntent.getBroadcast(
+        val fire = Intent(context, UrlBridgeActivity::class.java).apply { action = ACTION_OPEN }
+        val op = PendingIntent.getActivity(
             context, id, fire,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

@@ -55,6 +55,21 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
 
+        <!-- 网址任务闹钟的透明中转 Activity：原生闹钟 getActivity+opts 直启，
+             系统以用户可见方式启动（BAL 放行），onCreate 打开链接后立即 finish，
+             视觉无感。注意不能走广播链路——getBroadcast 无法 opt-in BAL。 -->
+        <activity
+            android:name=".UrlBridgeActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
