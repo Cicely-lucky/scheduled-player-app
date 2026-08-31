@@ -18,6 +18,12 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <!-- 全屏通知（Android 14+ 弹全屏提醒需要） -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!-- 悬浮窗权限：拥有 SYSTEM_ALERT_WINDOW 的 App 豁免后台启动 Activity（BAL），
+         这是 Android 官方豁免列表明文条款。16:25 实测：前台服务状态本身不豁免
+         （callingUidProcState=FOREGROUND_SERVICE 仍 BAL_BLOCK code=102，
+         callingUidHasVisibleActivity=false 是关键短板）。授权方式：设置里开启
+         「显示悬浮窗」或 adb appops set pkg SYSTEM_ALERT_WINDOW allow。 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
     <application
         android:label="定时播放"

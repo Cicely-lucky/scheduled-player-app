@@ -32,6 +32,15 @@ import android.util.Log
  *
  * 前台服务启动合法性：精确闹钟（setAlarmClock）触发后 App 处于系统临时白名单
  * （temporaryAppAllowlistDuration=10000），Android 12+ 允许从广播接收者拉起前台服务。
+ *
+ * 16:25 实测补充：FOREGROUND_SERVICE 进程状态本身仍不豁免 BAL
+ * （callingUidHasVisibleActivity=false 短板，BAL_BLOCK code=102）。
+ * 真正可靠的豁免是 SYSTEM_ALERT_WINDOW（悬浮窗）权限——Android 官方
+ * 豁免列表明文条款。Manifest 已声明，需用户在设置开启（或 adb 授权）。
+ *
+ * B 站链接直达：https://www.bilibili.com/video/BVxxx 在多数设备上无默认
+ * handler（弹选择器/被浏览器接管），而 bilibili:// 深链直接命中
+ * tv.danmaku.bili 且 isDefault=true。openUrl 会自动转换。
  */
 class UrlBridgeService : Service() {
 
@@ -70,21 +79,48 @@ class UrlBridgeService : Service() {
     }
 
     private fun openUrl(url: String): Boolean {
-        try {
-            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (view.resolveActivity(packageManager) == null) {
-                Log.e("SP-Alarm", "UrlBridgeService: no activity for $url")
-                PlaybackReceiver.showUrlFallbackNotification(this, url)
-                return false
+        // B 站网页链接优先转深链：bilibili://video/BVxxx 直接命中 B 站 App
+        // （isDefault=true），网页链接则无默认 handler（会弹选择器/被浏览器接管）。
+        val candidates = mutableListOf<String>()
+        toBilibiliDeepLink(url)?.let { candidates.add(it) }
+        candidates.add(url)
+
+        for (target in candidates) {
+            try {
+                val view = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val resolved = view.resolveActivity(packageManager)
+                if (resolved == null || resolved.packageName == "android" ||
+                    resolved.className.contains("ResolverActivity")
+                ) {
+                    Log.d("SP-Alarm", "UrlBridgeService: skip $target (resolver=$resolved)")
+                    continue
+                }
+                startActivity(view)
+                Log.d("SP-Alarm", "UrlBridgeService startActivity ok: $target -> ${resolved.packageName}")
+                return true
+            } catch (e: Exception) {
+                Log.d("SP-Alarm", "UrlBridgeService try $target failed: $e")
             }
-            startActivity(view)
-            Log.d("SP-Alarm", "UrlBridgeService startActivity ok: $url")
-            return true
-        } catch (e: Exception) {
-            Log.e("SP-Alarm", "UrlBridgeService startActivity failed: $e")
-            PlaybackReceiver.showUrlFallbackNotification(this, url)
-            return false
+        }
+        Log.e("SP-Alarm", "UrlBridgeService: all candidates failed for $url")
+        PlaybackReceiver.showUrlFallbackNotification(this, url)
+        return false
+    }
+
+    /**
+     * https://www.bilibili.com/video/BVxxx?t=1.4&p=48
+     *   → bilibili://video/BVxxx?p=48
+     * 仅转换 www.bilibili.com 的 /video/BVxxx 路径；b23.tv 短链与其他链接原样返回 null。
+     */
+    private fun toBilibiliDeepLink(url: String): String? {
+        val m = Regex("^https?://www\\.bilibili\\.com/video/(BV[0-9A-Za-z]+)(?:\\?.*)?$").find(url)
+            ?: return null
+        val bv = m.groupValues[1]
+        val p = Regex("[?&]p=(\\d+)").find(url)?.groupValues?.get(1)
+        return buildString {
+            append("bilibili://video/").append(bv)
+            if (p != null) append("?p=").append(p)
         }
     }
 
