@@ -40,6 +40,13 @@ class UrlBridgeActivity : Activity() {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
         }
+        // 非安全锁（无/滑动）时直接请求解除锁屏：B站启动后即为正常前台；
+        // 安全锁（PIN/指纹）时系统弹出解锁界面，用户解锁后直接看到已加载
+        // 的B站页面。FLAG_ACTIVITY_SHOW_WHEN_LOCKED 兜底：即使不解锁，
+        // B站也应盖在锁屏之上。
+        if (Build.VERSION.SDK_INT >= 26) {
+            setDismissKeyguard(true)
+        }
         val raw = intent.getStringExtra(EXTRA_URL) ?: ""
         val url = PlaybackReceiver.extractUrlCompat(raw)
         Log.d("SP-Alarm", "UrlBridgeActivity onCreate, url=$url")
@@ -62,6 +69,17 @@ class UrlBridgeActivity : Activity() {
             try {
                 val view = Intent(Intent.ACTION_VIEW, Uri.parse(target))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // 12:58 实测新问题：B站 IntentHandlerActivity 自身没有
+                // showWhenLocked（canShowWhenLocked:false），成为栈顶后系统
+                // 立即撤掉锁屏遮挡并恢复休眠（occludedChanged mOccluded=false
+                // → Going to sleep），屏幕亮起 200ms 即灭，B站被压在锁屏下。
+                // 修复：通过 intent flag 把 showWhenLocked + turnScreenOn
+                // 强加给被启动的第三方 Activity（API 27+ 提供，API 33 起
+                // 标记 deprecated 但仍被系统读取）。
+                @Suppress("DEPRECATION")
+                view.addFlags(Intent.FLAG_ACTIVITY_SHOW_WHEN_LOCKED)
+                @Suppress("DEPRECATION")
+                view.addFlags(Intent.FLAG_ACTIVITY_TURN_SCREEN_ON)
                 val resolved = view.resolveActivity(packageManager)
                 if (resolved == null || resolved.packageName == "android" ||
                     resolved.className.contains("ResolverActivity")
