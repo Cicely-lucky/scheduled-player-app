@@ -1,6 +1,7 @@
 package com.example.scheduled_player_app
 
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -8,30 +9,42 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 网址任务自动打开的锁屏可见中转 Activity。
  *
- * 17:25 实测：UrlBridgeService 内 startActivity 的 BAL 判定已放行
- * （BAL_ALLOW_SAW_PERMISSION，悬浮窗豁免生效），但屏幕熄灭+锁屏时被
- * MIUI 的 KeyguardLocked 检查拦下（Permission Denied Activity KeyguardLocked，
- * result code=102）——第三方 App 的 Activity 不带 showWhenLocked 标志，
- * 系统不允许它在锁屏之上显示。
+ * 演进史（实测驱动）：
+ * 1. UrlBridgeService 内 startActivity 被 BAL 拦截 → 悬浮窗权限豁免解决。
+ * 2. MIUI KeyguardLocked 拦截 → 本 Activity 带 showWhenLocked + turnScreenOn
+ *    （系统闹钟同款机制），成功在锁屏之上显示并点亮屏幕。
+ * 3. 12:58 实测新问题：B站 IntentHandlerActivity 自身没有 showWhenLocked
+ *    （canShowWhenLocked:false），成为栈顶后系统立即撤掉锁屏遮挡并恢复
+ *    休眠（occludedChanged mOccluded=false → Going to sleep），屏幕亮起
+ *    200ms 即灭，B站被压在锁屏之下不可见。
  *
- * 本 Activity 自带 setShowWhenLocked + setTurnScreenOn（系统闹钟同款机制）：
- * - 从 UrlBridgeService 拉起（悬浮窗豁免保证 BAL 放行）
- * - 锁屏上可见并点亮屏幕，此时它是最前台的可见 Activity
- * - onCreate 里打开目标链接（B 站深链优先），此时目标 Activity 在可见
- *   Activity 之上启动，不再触发锁屏拦截
- * - 延迟 2.5s 再 finish：保持本窗口在前台覆盖住锁屏，给目标 App 足够的
- *   绘制/启动时间；过早 finish 锁屏会重新盖上来
+ * 第 3 个问题的修复尝试与结论：
+ * - FLAG_ACTIVITY_SHOW_WHEN_LOCKED / FLAG_ACTIVITY_TURN_SCREEN_ON intent
+ *   flag 与 Activity.setDismissKeyguard 均已从新版 SDK 移除（CI 编译失败：
+ *   Unresolved reference），无法把 showWhenLocked 强加给第三方 Activity。
+ * - 唯一可行路径：KeyguardManager.requestDismissKeyguard（API 26+，现行）
+ *   - 非安全锁（无/滑动解锁）：锁屏被直接解除，B站全屏正常显示，最理想；
+ *   - 安全锁（PIN/指纹）：系统弹出解锁界面（无法也不应绕过），用户解锁后
+ *     直接看到已加载完成的B站播放页。
+ *
+ * 流程：onCreate → 点亮屏幕+盖在锁屏上 → 请求解除锁屏 → 回调（或超时
+ * 兜底）后打开深链 → 延迟 2.5s finish（给目标 App 绘制时间）。
  */
 class UrlBridgeActivity : Activity() {
 
     companion object {
         const val EXTRA_URL = "url"
+        private const val KEYGUARD_WAIT_MS = 1_500L
         private const val FINISH_DELAY_MS = 2_500L
     }
+
+    /** openAndFinish 只执行一次（回调 + 超时兜底可能都触发） */
+    private val opened = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,20 +53,59 @@ class UrlBridgeActivity : Activity() {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
         }
-        // 非安全锁（无/滑动）时直接请求解除锁屏：B站启动后即为正常前台；
-        // 安全锁（PIN/指纹）时系统弹出解锁界面，用户解锁后直接看到已加载
-        // 的B站页面。FLAG_ACTIVITY_SHOW_WHEN_LOCKED 兜底：即使不解锁，
-        // B站也应盖在锁屏之上。
-        if (Build.VERSION.SDK_INT >= 26) {
-            setDismissKeyguard(true)
-        }
         val raw = intent.getStringExtra(EXTRA_URL) ?: ""
         val url = PlaybackReceiver.extractUrlCompat(raw)
         Log.d("SP-Alarm", "UrlBridgeActivity onCreate, url=$url")
+
+        requestKeyguardDismissThenOpen(url)
+        // 兜底：回调超时/不回调也照常打开（安全锁时B站加载在解锁界面之后）
+        Handler(Looper.getMainLooper())
+            .postDelayed({ openAndFinish(url) }, KEYGUARD_WAIT_MS)
+    }
+
+    /**
+     * 请求解除锁屏后打开目标链接。
+     * 非安全锁：onDismissSucceeded → 解锁完成再打开，B站直接全屏；
+     * 安全锁：onDismissCancelled/系统弹解锁界面 → 仍打开B站（加载在
+     * 解锁界面之下，用户解锁后即见）。
+     */
+    private fun requestKeyguardDismissThenOpen(url: String) {
+        val km = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+        if (km == null) {
+            openAndFinish(url)
+            return
+        }
+        val callback = object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() {
+                Log.d("SP-Alarm", "keyguard dismissed -> open url")
+                openAndFinish(url)
+            }
+
+            override fun onDismissError() {
+                Log.d("SP-Alarm", "keyguard dismiss error -> open url anyway")
+                openAndFinish(url)
+            }
+
+            override fun onDismissCancelled() {
+                Log.d("SP-Alarm", "keyguard dismiss cancelled -> open url anyway")
+                openAndFinish(url)
+            }
+        }
+        try {
+            km.requestDismissKeyguard(this, callback)
+            Log.d("SP-Alarm", "requestDismissKeyguard sent (secure=${km.isKeyguardSecure})")
+        } catch (e: Exception) {
+            Log.d("SP-Alarm", "requestDismissKeyguard failed: $e")
+            openAndFinish(url)
+        }
+    }
+
+    private fun openAndFinish(url: String) {
+        if (!opened.compareAndSet(false, true)) return
         if (url.isNotEmpty()) {
             openUrl(url)
         }
-        // 延迟收摊：保持窗口盖住锁屏，等目标 App 完成启动绘制
+        // 延迟收摊：保持本窗口盖住锁屏，等目标 App 完成启动绘制
         Handler(Looper.getMainLooper()).postDelayed({ finish() }, FINISH_DELAY_MS)
     }
 
@@ -69,17 +121,6 @@ class UrlBridgeActivity : Activity() {
             try {
                 val view = Intent(Intent.ACTION_VIEW, Uri.parse(target))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                // 12:58 实测新问题：B站 IntentHandlerActivity 自身没有
-                // showWhenLocked（canShowWhenLocked:false），成为栈顶后系统
-                // 立即撤掉锁屏遮挡并恢复休眠（occludedChanged mOccluded=false
-                // → Going to sleep），屏幕亮起 200ms 即灭，B站被压在锁屏下。
-                // 修复：通过 intent flag 把 showWhenLocked + turnScreenOn
-                // 强加给被启动的第三方 Activity（API 27+ 提供，API 33 起
-                // 标记 deprecated 但仍被系统读取）。
-                @Suppress("DEPRECATION")
-                view.addFlags(Intent.FLAG_ACTIVITY_SHOW_WHEN_LOCKED)
-                @Suppress("DEPRECATION")
-                view.addFlags(Intent.FLAG_ACTIVITY_TURN_SCREEN_ON)
                 val resolved = view.resolveActivity(packageManager)
                 if (resolved == null || resolved.packageName == "android" ||
                     resolved.className.contains("ResolverActivity")
