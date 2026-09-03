@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/task.dart';
 import '../scheduler/scheduler.dart';
+import '../services/perm.dart';
 import '../storage/task_store.dart';
 import 'create_page.dart';
 import 'detail_page.dart';
@@ -14,18 +15,46 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<PlayTask> _tasks = [];
   bool _loading = true;
+
+  /// 悬浮窗权限状态：null=未检测；false=未授权（显示警告横幅）
+  bool? _overlayOk;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _reload();
+    _checkPerm();
     // 通知自检在启动后约 3 秒完成，延迟刷新让首页状态行显示结果
     Future.delayed(const Duration(seconds: 5), () {
       if (mounted) setState(() {});
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// 从设置页返回时重新检测权限（授权后横幅自动消失）
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkPerm();
+  }
+
+  Future<void> _checkPerm() async {
+    final ok = await Perm.canDrawOverlays();
+    if (mounted && ok != _overlayOk) setState(() => _overlayOk = ok);
+  }
+
+  /// 打开悬浮窗授权页；打不开则回退应用详情页
+  Future<void> _goPermSettings() async {
+    final opened = await Perm.requestOverlay();
+    if (!opened) await Perm.openAppDetails();
   }
 
   Future<void> _reload() async {
@@ -127,12 +156,24 @@ class _HomePageState extends State<HomePage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _tasks.isEmpty
-              ? _buildEmpty()
+              ? RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 90),
+                    children: [
+                      if (_overlayOk == false) _buildPermBanner(),
+                      const SizedBox(height: 10),
+                      _buildEmptyPlaceholder(),
+                    ],
+                  ),
+                )
               : RefreshIndicator(
                   onRefresh: _reload,
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(14, 6, 14, 90),
                     children: [
+                      if (_overlayOk == false) _buildPermBanner(),
+                      const SizedBox(height: 10),
                       _buildNextCard(),
                       const SizedBox(height: 10),
                       ..._tasks.map((t) => _buildTaskCard(t)),
@@ -142,10 +183,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildEmpty() {
-    return Center(
+  /// 空列表占位（用于嵌入 ListView，保留下拉刷新）
+  Widget _buildEmptyPlaceholder() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 120),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.alarm, size: 64, color: Colors.grey.shade300),
           const SizedBox(height: 12),
@@ -154,6 +196,61 @@ class _HomePageState extends State<HomePage> {
           Text('点击右下角 + 新建第一个定时任务',
               style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
         ],
+      ),
+    );
+  }
+
+  /// 悬浮窗权限警告横幅：重装App后权限会重置，未授权时到点无法
+  /// 后台打开链接，此处引导用户一键跳转设置页自服务授权
+  Widget _buildPermBanner() {
+    return Card(
+      elevation: 0,
+      color: Colors.orange.withOpacity(0.1),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.orange.withOpacity(0.4)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Colors.deepOrange),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '悬浮窗权限未开启',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.deepOrange),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _goPermSettings,
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.deepOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    minimumSize: const Size(0, 32),
+                  ),
+                  child: const Text('去开启', style: TextStyle(fontSize: 13)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '锁屏或后台时到点将无法自动打开链接（B站等）。\n'
+              '小米手机请同时在 应用信息 → 权限管理 中开启\n'
+              '「后台弹出界面」和「锁屏显示」。',
+              style: TextStyle(
+                  fontSize: 12, height: 1.5, color: Colors.grey.shade700),
+            ),
+          ],
+        ),
       ),
     );
   }
