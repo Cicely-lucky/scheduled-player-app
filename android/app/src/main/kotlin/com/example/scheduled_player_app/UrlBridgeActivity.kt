@@ -119,8 +119,18 @@ class UrlBridgeActivity : Activity() {
 
         for (target in candidates) {
             try {
+                val isBiliDeepLink = target.startsWith("bilibili://")
                 val view = Intent(Intent.ACTION_VIEW, Uri.parse(target))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // 09-04 08:58 实测问题：B站旧任务仍留在后台时，深链只是把
+                // 旧任务拉到前台并恢复上次会话——播放的是退出B站时的旧视频，
+                // 定时链接被吞掉。修复：深链加 FLAG_ACTIVITY_CLEAR_TASK，
+                // 清掉B站旧任务、强制冷启动到目标视频页（个人自用可接受打断
+                // B站后台播放）。网页链接的浏览器回退不加此 flag，避免清空
+                // 用户浏览器会话。
+                if (isBiliDeepLink) {
+                    view.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                }
                 val resolved = view.resolveActivity(packageManager)
                 if (resolved == null || resolved.packageName == "android" ||
                     resolved.className.contains("ResolverActivity")
