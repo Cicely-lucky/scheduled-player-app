@@ -95,14 +95,16 @@ jobs:
       - name: 生成签名密钥（仅首次无缓存时执行）
         run: |
           if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            # runner 上 ~/.android 目录可能不存在，keytool 写文件会失败
+            mkdir -p "$HOME/.android"
             keytool -genkeypair -v \
               -keystore "$HOME/.android/debug.keystore" \
               -alias androiddebugkey -keyalg RSA -keysize 2048 \
               -validity 10000 -storepass android -keypass android \
               -dname "CN=Android Debug,O=Android,C=US"
-            echo "--- 首次生成新签名密钥 ---"
+            echo "--- first-run: new signing key generated ---"
           else
-            echo "--- 复用缓存签名密钥 ---"
+            echo "--- cached signing key reused ---"
           fi
           ls -la "$HOME/.android/"
 
