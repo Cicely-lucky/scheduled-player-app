@@ -298,10 +298,10 @@ class Scheduler {
         });
       }
       final intent = AndroidIntent(
-        action: 'com.example.scheduled_player_app.SYNC_URL_ALARMS',
-        package: 'com.example.scheduled_player_app',
+        action: 'com.cici.scheduledplayer.SYNC_URL_ALARMS',
+        package: 'com.cici.scheduledplayer',
         // 必须用完整类名（插件原生端不展开 .ClassName 缩写）
-        componentName: 'com.example.scheduled_player_app.PlaybackReceiver',
+        componentName: 'com.cici.scheduledplayer.PlaybackReceiver',
         arguments: <String, dynamic>{'alarms': jsonEncode(list)},
       );
       await intent.sendBroadcast();
@@ -319,9 +319,9 @@ class Scheduler {
   static Future<bool> _startBackgroundOpenUrl(PlayTask t) async {
     try {
       final intent = AndroidIntent(
-        action: 'com.example.scheduled_player_app.OPEN_URL',
-        package: 'com.example.scheduled_player_app',
-        componentName: 'com.example.scheduled_player_app.PlaybackReceiver',
+        action: 'com.cici.scheduledplayer.OPEN_URL',
+        package: 'com.cici.scheduledplayer',
+        componentName: 'com.cici.scheduledplayer.PlaybackReceiver',
         arguments: <String, dynamic>{'url': t.url},
       );
       await intent.sendBroadcast();
@@ -339,11 +339,11 @@ class Scheduler {
   static Future<bool> _startBackgroundPlayback(PlayTask t) async {
     try {
       final intent = AndroidIntent(
-        action: 'com.example.scheduled_player_app.PLAYBACK_START',
-        package: 'com.example.scheduled_player_app',
+        action: 'com.cici.scheduledplayer.PLAYBACK_START',
+        package: 'com.cici.scheduledplayer',
         // 注意：必须用完整类名。插件原生端 new ComponentName(pkg, cls)
         // 不支持 ".ClassName" 缩写展开，缩写会导致广播找不到接收器
-        componentName: 'com.example.scheduled_player_app.PlaybackReceiver',
+        componentName: 'com.cici.scheduledplayer.PlaybackReceiver',
         arguments: <String, dynamic>{
           'path': t.fileName,
           'title': t.name,

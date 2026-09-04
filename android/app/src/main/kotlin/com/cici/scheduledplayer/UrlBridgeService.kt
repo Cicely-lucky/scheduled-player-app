@@ -1,4 +1,4 @@
-package com.example.scheduled_player_app
+package com.cici.scheduledplayer
 
 import android.app.Notification
 import android.app.NotificationChannel

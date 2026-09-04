@@ -1,4 +1,4 @@
-package com.example.scheduled_player_app
+package com.cici.scheduledplayer
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -29,7 +29,7 @@ import android.util.Log
 class PlaybackService : Service() {
 
     companion object {
-        const val ACTION_STOP = "com.example.scheduled_player_app.PLAYBACK_STOP"
+        const val ACTION_STOP = "com.cici.scheduledplayer.PLAYBACK_STOP"
         const val EXTRA_PATH = "path"
         const val EXTRA_TITLE = "title"
         const val EXTRA_LOOP = "loop"

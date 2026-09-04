@@ -28,6 +28,18 @@ jobs:
           flutter create --platforms=android --project-name scheduled_player_app .
           rm -rf test
 
+      # flutter create 默认 applicationId/namespace = com.example.scheduled_player_app
+      # （项目名下划线会被拼进去）。本应用对外使用 com.cici.scheduledplayer，
+      # 故在 create 之后、Kotlin 编译之前批量改写。
+      - name: 重写 applicationId 与 namespace 为 com.cici.scheduledplayer
+        run: |
+          for f in android/app/build.gradle android/app/build.gradle.kts; do
+            [ -f "$f" ] || continue
+            sed -i 's/com\.example\.scheduled_player_app/com.cici.scheduledplayer/g' "$f"
+          done
+          echo "--- applicationId / namespace ---"
+          grep -E 'applicationId|namespace' android/app/build.gradle android/app/build.gradle.kts 2>/dev/null | head -5
+
       - name: 提升 compileSdk 到 35（部分插件要求）
         run: |
           sed -i -E 's/(compileSdk(Version)?)( =)? flutter\.compileSdkVersion/\1\2 = 35/' android/app/build.gradle

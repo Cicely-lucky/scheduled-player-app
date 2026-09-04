@@ -1,4 +1,4 @@
-package com.example.scheduled_player_app
+package com.cici.scheduledplayer
 
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -35,7 +35,7 @@ object UrlAlarmScheduler {
 
     private const val PREFS = "url_alarm_state"
     private const val KEY_IDS = "scheduled_ids"
-    const val ACTION_OPEN = "com.example.scheduled_player_app.OPEN_URL"
+    const val ACTION_OPEN = "com.cici.scheduledplayer.OPEN_URL"
 
     data class Item(val id: Int, val at: Long, val url: String)
 

@@ -1,4 +1,4 @@
-package com.example.scheduled_player_app
+package com.cici.scheduledplayer
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -92,7 +92,7 @@ class PlaybackReceiver : BroadcastReceiver() {
         Log.d("SP-Alarm", "receiver got broadcast, action=${intent.action}, path=${intent.getStringExtra("path")}")
 
         // 全量同步网址任务的原生闹钟（Dart 主/后台 isolate 均可发）
-        if (intent.action == "com.example.scheduled_player_app.SYNC_URL_ALARMS") {
+        if (intent.action == "com.cici.scheduledplayer.SYNC_URL_ALARMS") {
             val json = intent.getStringExtra("alarms") ?: "[]"
             val items = try {
                 val arr = org.json.JSONArray(json)
@@ -115,7 +115,7 @@ class PlaybackReceiver : BroadcastReceiver() {
         // 会被 AOSP 后台启动拦截（procState=RECEIVER，BAL_BLOCK code=102，
         // 小米 Android 16 实测）；startForegroundService 拉起前台服务后进程
         // 处于 FOREGROUND_SERVICE 状态，服务内 startActivity 属豁免场景。
-        if (intent.action == "com.example.scheduled_player_app.OPEN_URL") {
+        if (intent.action == "com.cici.scheduledplayer.OPEN_URL") {
             val raw = intent.getStringExtra("url")
             if (raw.isNullOrEmpty()) {
                 Log.e("SP-Alarm", "OPEN_URL but url is empty")
