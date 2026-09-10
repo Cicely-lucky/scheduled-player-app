@@ -39,13 +39,13 @@ class ScheduledPlayerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '定时播放',
+      title: '小云闹钟',
       debugShowCheckedModeBanner: false,
       navigatorKey: navKey,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF38BDF8)),
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF7F7FA),
+        scaffoldBackgroundColor: const Color(0xFFE8F6FC),
       ),
       home: const HomePage(),
     );

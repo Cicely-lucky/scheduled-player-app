@@ -1,7 +1,7 @@
 name: scheduled_player_app
-description: "定时播放 App：定时打开网址 / 定时播放音视频文件，支持循环播放与锁定时长"
+description: "小云闹钟：定时打开网址 / 定时播放音视频文件，支持循环播放与锁定时长"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -33,3 +33,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/logo/logo_1024.png

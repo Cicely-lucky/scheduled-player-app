@@ -56,7 +56,7 @@
     </queries>
 
     <application
-        android:label="定时播放"
+        android:label="小云闹钟"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
