@@ -239,11 +239,18 @@ class Scheduler {
         await TaskStore.markTriggered(t.id, '$dayKey ${t.time}');
         await _execute(t);
       }
-
-      // 无论是否触发，都重新调度下一次
-      await scheduleNext();
     } catch (e) {
       debugPrint('SP-Alarm check error: $e');
+    } finally {
+      // 关键修复：重排必须放 finally——此前在 try 末尾，执行中任何异常
+      // （读存储失败、广播失败等）都会跳过重排，导致两条链同时断裂，
+      // 表现为"播放一次后再也不触发"。scheduleNext 内部自带 try/catch，
+      // 此处再包一层保证 finally 本身绝不抛出。
+      try {
+        await scheduleNext();
+      } catch (e) {
+        debugPrint('SP-Alarm reschedule-in-finally error: $e');
+      }
     }
   }
 
@@ -295,6 +302,12 @@ class Scheduler {
           'id': _notifId(t.id),
           'at': at.millisecondsSinceEpoch,
           'url': t.url,
+          // 重复规则一并下发：原生闹钟触发后自行重排下一次，
+          // 不再依赖 Dart 后台 isolate 存活（双链解耦的根治方案）
+          'freq': t.freq, // daily | weekly | date
+          'days': t.days.toList(), // 1=周一 ... 7=周日
+          'time': t.time, // "HH:mm"
+          'date': t.date, // freq=date 时的日期
         });
       }
       final intent = AndroidIntent(

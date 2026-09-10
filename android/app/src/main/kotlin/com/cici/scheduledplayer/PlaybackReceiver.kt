@@ -99,7 +99,16 @@ class PlaybackReceiver : BroadcastReceiver() {
                 (0 until arr.length()).map { i ->
                     val o = arr.getJSONObject(i)
                     UrlAlarmScheduler.Item(
-                        o.getInt("id"), o.getLong("at"), o.getString("url")
+                        id = o.getInt("id"),
+                        at = o.getLong("at"),
+                        url = o.getString("url"),
+                        // 重复规则（旧版 Dart 无这些字段时取默认值，向后兼容）
+                        freq = o.optString("freq", "daily"),
+                        days = o.optJSONArray("days")?.let { ja ->
+                            (0 until ja.length()).mapNotNull { j -> ja.optInt(j) }.toSet()
+                        } ?: emptySet(),
+                        time = o.optString("time", "08:00"),
+                        date = o.optString("date", "")
                     )
                 }
             } catch (e: Exception) {
@@ -127,6 +136,26 @@ class PlaybackReceiver : BroadcastReceiver() {
             val fromNativeAlarm = intent.getBooleanExtra("from_native_alarm", false)
             Log.d("SP-Alarm", "OPEN_URL raw=$raw")
             Log.d("SP-Alarm", "OPEN_URL extracted=$url, fromNativeAlarm=$fromNativeAlarm")
+
+            // 原生自愈链：原生闹钟触发后立刻自行重排下一次（不依赖 Dart
+            // isolate 存活）。放在去重判断之前——即使本次打开被 60 秒去重
+            // 跳过（Dart 备份链已开过），明天的闹钟也必须续上。
+            if (fromNativeAlarm && intent.hasExtra("freq")) {
+                try {
+                    val item = UrlAlarmScheduler.Item(
+                        id = intent.getIntExtra("alarm_id", 0),
+                        at = 0L,
+                        url = url,
+                        freq = intent.getStringExtra("freq") ?: "daily",
+                        days = intent.getIntArrayExtra("days")?.toSet() ?: emptySet(),
+                        time = intent.getStringExtra("time") ?: "08:00",
+                        date = intent.getStringExtra("date") ?: ""
+                    )
+                    if (item.id != 0) UrlAlarmScheduler.rescheduleNext(context, item)
+                } catch (e: Exception) {
+                    Log.e("SP-Alarm", "native reschedule failed: $e")
+                }
+            }
 
             // 原生闹钟（getBroadcast）与 Dart 定时器都可能触发，60 秒内同 url 只开一次
             if (!shouldOpen(url)) {

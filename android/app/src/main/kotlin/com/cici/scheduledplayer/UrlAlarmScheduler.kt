@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import java.util.Calendar
 
 /**
  * 网址任务的原生精确闹钟。
@@ -37,7 +38,14 @@ object UrlAlarmScheduler {
     private const val KEY_IDS = "scheduled_ids"
     const val ACTION_OPEN = "com.cici.scheduledplayer.OPEN_URL"
 
-    data class Item(val id: Int, val at: Long, val url: String)
+    data class Item(
+        val id: Int, val at: Long, val url: String,
+        // 重复规则（与 Dart 端 PlayTask 一致）：触发后原生自行重排下一次
+        val freq: String = "daily",   // daily | weekly | date
+        val days: Set<Int> = emptySet(), // 1=周一 ... 7=周日
+        val time: String = "08:00",   // "HH:mm"
+        val date: String = ""         // freq=date 时的 "yyyy-MM-dd"
+    )
 
     /** 全量同步：取消不再需要的闹钟，注册/刷新新闹钟 */
     fun sync(context: Context, items: List<Item>) {
@@ -71,6 +79,12 @@ object UrlAlarmScheduler {
             action = ACTION_OPEN
             putExtra("url", item.url)
             putExtra("from_native_alarm", true)
+            // 重复规则随闹钟下发：receiver 触发后据此自行重排下一次（自愈链）
+            putExtra("alarm_id", item.id)
+            putExtra("freq", item.freq)
+            putExtra("days", item.days.toIntArray())
+            putExtra("time", item.time)
+            putExtra("date", item.date)
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val op = PendingIntent.getBroadcast(context, item.id, fire, flags)
@@ -93,5 +107,86 @@ object UrlAlarmScheduler {
         am.cancel(op)
         op.cancel()
         Log.d("SP-Alarm", "native url alarm #$id cancelled")
+    }
+
+    // ------------------------------------------------------------------
+    // 原生自愈链：闹钟触发后由 receiver 调用，自行重排下一次。
+    // 此前重排完全依赖 Dart 后台 isolate（check() 末尾的 scheduleNext），
+    // 进程被杀且拉起失败时链条即断（"播放一次后不再触发"的根因）。
+    // 现在原生触发后自己算下一次，与 Dart 链互为备份、真正解耦。
+    // ------------------------------------------------------------------
+
+    /**
+     * 计算重复规则的下一次触发时刻（与 Dart 端 PlayTask.nextRunAt 逻辑一致）。
+     * 返回 null 表示不会再触发（freq=date 且日期已过）。
+     */
+    fun nextAtMillis(now: Calendar, item: Item): Long? {
+        val parts = item.time.split(":")
+        if (parts.size != 2) return null
+        val h = parts[0].toIntOrNull() ?: return null
+        val m = parts[1].toIntOrNull() ?: return null
+
+        fun at(day: Calendar): Calendar = (day.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, h)
+            set(Calendar.MINUTE, m)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
+        when (item.freq) {
+            "date" -> {
+                val d = item.date.split("-")
+                if (d.size != 3) return null
+                val c = at(Calendar.getInstance().apply {
+                    set(d[0].toIntOrNull() ?: return null,
+                        (d[1].toIntOrNull() ?: return null) - 1,
+                        d[2].toIntOrNull() ?: return null)
+                })
+                return if (c.timeInMillis > now.timeInMillis) c.timeInMillis else null
+            }
+            "weekly" -> {
+                // 往后找 8 天，取第一个匹配周几且时刻晚于 now 的
+                for (i in 0..7) {
+                    val day = (now.clone() as Calendar).apply {
+                        add(Calendar.DAY_OF_YEAR, i)
+                    }
+                    val c = at(day)
+                    if (c.timeInMillis <= now.timeInMillis) continue
+                    // Java: SUNDAY=1..SATURDAY=7 → 本应用: 1=周一..7=周日
+                    val raw = c.get(Calendar.DAY_OF_WEEK)
+                    val wd = if (raw == Calendar.SUNDAY) 7 else raw - 1
+                    if (wd in item.days) return c.timeInMillis
+                }
+                return null
+            }
+            else -> { // daily
+                val c = at(now)
+                // 触发时刻通常 == now（提前几百毫秒时会重排到当天一次，
+                // 再触发时已过时刻→顺延明天；60 秒去重防双开）
+                if (c.timeInMillis <= now.timeInMillis) c.add(Calendar.DAY_OF_YEAR, 1)
+                return c.timeInMillis
+            }
+        }
+    }
+
+    /** 原生闹钟触发后的自愈重排：保持同一 id，续到下一次触发时刻 */
+    fun rescheduleNext(context: Context, item: Item) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val nextAt = nextAtMillis(Calendar.getInstance(), item)
+        if (nextAt == null) {
+            // 一次性任务已过期：从持久化集合移除，避免残留空 id
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val old = prefs.getStringSet(KEY_IDS, emptySet())
+                ?.mapNotNull { it.toIntOrNull() }?.toMutableSet() ?: mutableSetOf()
+            if (old.remove(item.id)) {
+                prefs.edit()
+                    .putStringSet(KEY_IDS, old.map { it.toString() }.toSet())
+                    .apply()
+            }
+            Log.d("SP-Alarm", "native reschedule: #${item.id} expired (one-shot), removed")
+            return
+        }
+        scheduleInternal(context, am, item.copy(at = nextAt))
+        Log.d("SP-Alarm", "native rescheduled #${item.id} -> $nextAt (${item.freq}/${item.time})")
     }
 }
