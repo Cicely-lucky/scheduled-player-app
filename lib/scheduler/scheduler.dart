@@ -382,6 +382,11 @@ class Scheduler {
     for (final t in tasks) {
       if (t.id != id) continue;
       if (t.ct == 'url') {
+        // 09-12 修复：通知点击也统一走原生桥（UrlBridgeActivity）打开。
+        // 此前用 url_launcher 裸开，B站旧任务在后台时只是被拉到前台
+        // 恢复旧会话，设定的链接被吞。原生桥对 B 站链接会加
+        // CLEAR_TASK 强制冷启动到目标视频。
+        if (await _startBackgroundOpenUrl(t)) return;
         await _tryOpenUrl(t.url);
       } else {
         final ctx = navKey?.currentContext;

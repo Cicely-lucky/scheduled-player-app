@@ -122,15 +122,6 @@ class UrlBridgeActivity : Activity() {
                 val isBiliDeepLink = target.startsWith("bilibili://")
                 val view = Intent(Intent.ACTION_VIEW, Uri.parse(target))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                // 09-04 08:58 实测问题：B站旧任务仍留在后台时，深链只是把
-                // 旧任务拉到前台并恢复上次会话——播放的是退出B站时的旧视频，
-                // 定时链接被吞掉。修复：深链加 FLAG_ACTIVITY_CLEAR_TASK，
-                // 清掉B站旧任务、强制冷启动到目标视频页（个人自用可接受打断
-                // B站后台播放）。网页链接的浏览器回退不加此 flag，避免清空
-                // 用户浏览器会话。
-                if (isBiliDeepLink) {
-                    view.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                }
                 val resolved = view.resolveActivity(packageManager)
                 if (resolved == null || resolved.packageName == "android" ||
                     resolved.className.contains("ResolverActivity")
@@ -138,8 +129,25 @@ class UrlBridgeActivity : Activity() {
                     Log.d("SP-Alarm", "UrlBridgeActivity: skip $target (resolver=$resolved)")
                     continue
                 }
+                // 09-04 08:58 实测问题：B站旧任务仍留在后台时，深链只是把
+                // 旧任务拉到前台并恢复上次会话——播放的是退出B站时的旧视频，
+                // 定时链接被吞掉。修复：深链加 FLAG_ACTIVITY_CLEAR_TASK，
+                // 清掉B站旧任务、强制冷启动到目标视频页（个人自用可接受打断
+                // B站后台播放）。
+                //
+                // 09-12 10:20 实测问题（本轮修复）：B站对 b23.tv / bilibili.com
+                // 注册了 App Links，b23.tv 短链等未走深链转换的链接同样会被
+                // B站接住——但那条路径没有加 CLEAR_TASK，到点只是恢复B站旧会话，
+                // 播的还是旧视频。修复：不再只看"是不是深链"，而是看**接收方
+                // 是不是B站 App**——凡是落到 B站包名的 intent 一律 CLEAR_TASK，
+                // 强制冷启动。浏览器等其他接收方不受影响。
+                val isBiliApp = resolved.packageName == "tv.danmaku.bili" ||
+                    resolved.packageName == "com.bilibili.app.in"
+                if (isBiliDeepLink || isBiliApp) {
+                    view.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                }
                 startActivity(view)
-                Log.d("SP-Alarm", "UrlBridgeActivity startActivity ok: $target -> ${resolved.packageName}")
+                Log.d("SP-Alarm", "UrlBridgeActivity startActivity ok: $target -> ${resolved.packageName} (clearTask=${isBiliDeepLink || isBiliApp})")
                 return true
             } catch (e: Exception) {
                 Log.d("SP-Alarm", "UrlBridgeActivity try $target failed: $e")
@@ -153,15 +161,19 @@ class UrlBridgeActivity : Activity() {
     /**
      * https://www.bilibili.com/video/BVxxx?t=1.4&p=48
      *   → bilibili://video/BVxxx?p=48
-     * 仅转换 www.bilibili.com 的 /video/BVxxx 路径；b23.tv 短链与其他链接原样返回 null。
+     * https://m.bilibili.com/video/BVxxx/（m 站、尾部斜杠、av 号同样支持）
+     *   → bilibili://video/BVxxx
+     * 仅转换 bilibili.com 域名的 /video/ 路径；b23.tv 短链无法离线还原 BV 号
+     * （需网络 302 跳转），原样返回 null，由上面的"按包名 CLEAR_TASK"兜底。
      */
     private fun toBilibiliDeepLink(url: String): String? {
-        val m = Regex("^https?://www\\.bilibili\\.com/video/(BV[0-9A-Za-z]+)(?:\\?.*)?$").find(url)
-            ?: return null
-        val bv = m.groupValues[1]
+        val m = Regex(
+            "^https?://(?:www|m)\\.bilibili\\.com/video/(BV[0-9A-Za-z]+|av\\d+)/?(?:\\?.*)?$"
+        ).find(url) ?: return null
+        val vid = m.groupValues[1]
         val p = Regex("[?&]p=(\\d+)").find(url)?.groupValues?.get(1)
         return buildString {
-            append("bilibili://video/").append(bv)
+            append("bilibili://video/").append(vid)
             if (p != null) append("?p=").append(p)
         }
     }
