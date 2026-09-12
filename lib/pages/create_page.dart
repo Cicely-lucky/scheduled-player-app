@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/task.dart';
@@ -19,6 +20,7 @@ class CreatePage extends StatefulWidget {
 
 class _CreatePageState extends State<CreatePage> {
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _urlCtrl;
 
   late String _time;
   late String _freq;
@@ -50,6 +52,7 @@ class _CreatePageState extends State<CreatePage> {
     _date = i?.date ?? '';
     _ct = i?.ct ?? 'url';
     _url = i?.url ?? '';
+    _urlCtrl = TextEditingController(text: _url);
     _fileName = i?.fileName ?? '';
     _isVideo = i?.isVideo ?? false;
     _auto = i?.auto ?? 'loop';
@@ -63,9 +66,73 @@ class _CreatePageState extends State<CreatePage> {
   static const _weekNames = ['一', '二', '三', '四', '五', '六', '日'];
   static const _videoExts = ['mp4', 'mov', 'mkv', 'webm', 'm4v'];
 
+  // ---------- BV 号自动拼接 ----------
+  // 输入支持三种形态，统一拼接为完整长链接：
+  //   1. 裸 BV 号：BV1xx411c7mD
+  //   2. B站网页链接：www/m.bilibili.com/video/BVxxx?p=2（含尾部斜杠、av 页等）
+  //   3. B站深链：bilibili://video/BVxxx
+  // 说明：b23.tv 短链无法离线还原 BV 号（需网络 302 跳转），
+  // 若链接里直接带 BV 字样则可提取，否则原样保留（原生桥会兜底处理）。
+  // B 站 BV 号自 2020 年起固定为「BV + 10 位」共 12 字符。
+  // 精确匹配而非 8~15 位宽松区间：手输场景下若在未满 12 字符时就触发
+  // 替换，用户后续字符会打不进/状态错乱；精确到 12 字符时转换刚好一次成型。
+  static final _reBvStandalone = RegExp(r'^BV[0-9A-Za-z]{10}$');
+  static final _reBvInText = RegExp(
+      r'(?:bilibili\.com(?:/video)?/|b23\.tv/|bilibili://video/)(BV[0-9A-Za-z]+)');
+  static final _rePageParam = RegExp(r'[?&]p=(\d+)');
+
+  /// 把用户输入规范化为 B站完整长链接；非 B站视频内容原样返回（trim 后）
+  static String _normalizeBiliUrl(String input) {
+    final s = input.trim();
+    if (s.isEmpty) return s;
+    String? bv;
+    if (_reBvStandalone.hasMatch(s)) {
+      bv = s; // 整串就是 BV 号
+    } else {
+      bv = _reBvInText.firstMatch(s)?.group(1);
+    }
+    if (bv == null) return s;
+    final p = _rePageParam.firstMatch(s)?.group(1);
+    return p == null
+        ? 'https://www.bilibili.com/video/$bv'
+        : 'https://www.bilibili.com/video/$bv?p=$p';
+  }
+
+  /// 网址输入变化：自动识别 BV 号 / B站链接并替换为完整长链接
+  void _onUrlChanged(String v) {
+    final normalized = _normalizeBiliUrl(v);
+    if (normalized != v.trim() && normalized.isNotEmpty) {
+      // 输入被识别为 BV 号或 B站链接 → 自动替换为拼接好的长链接
+      _url = normalized;
+      // 赋值会再次触发 onChanged，届时 normalized == 输入即稳定，
+      // 提示行在那一轮 setState 中刷新
+      _urlCtrl.value = TextEditingValue(
+        text: normalized,
+        selection: TextSelection.collapsed(offset: normalized.length),
+      );
+      return;
+    }
+    setState(() => _url = normalized);
+  }
+
+  /// 从剪贴板粘贴并自动识别（B站 App 里复制 BV 号后一键填入）
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('剪贴板为空')));
+      }
+      return;
+    }
+    _onUrlChanged(text);
+  }
+
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _urlCtrl.dispose();
     super.dispose();
   }
 
@@ -162,7 +229,11 @@ class _CreatePageState extends State<CreatePage> {
           .showSnackBar(const SnackBar(content: Text('请选择触发日期')));
       return;
     }
-    if (_ct == 'url' && _url.trim().isEmpty) {
+    // 兜底规范化：即使用户绕过了输入框的自动替换（如恢复旧任务数据），
+    // 保存进任务的也一定是拼接好的完整长链接——后续调度、通知、
+    // 原生桥打开的都是这个值
+    final url = _normalizeBiliUrl(_url);
+    if (_ct == 'url' && url.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('请输入要打开的网址')));
       return;
@@ -181,7 +252,7 @@ class _CreatePageState extends State<CreatePage> {
       time: _time,
       date: _date,
       ct: _ct,
-      url: _url.trim(),
+      url: url,
       fileName: _fileName,
       isVideo: _isVideo,
       auto: _auto,
@@ -265,13 +336,47 @@ class _CreatePageState extends State<CreatePage> {
                   if (_ct == 'url') ...[
                     const SizedBox(height: 12),
                     TextField(
-                      decoration: const InputDecoration(
-                        hintText: 'https:// 或 http://',
-                        border: OutlineInputBorder(),
+                      controller: _urlCtrl,
+                      onChanged: _onUrlChanged,
+                      keyboardType: TextInputType.url,
+                      decoration: InputDecoration(
+                        hintText: '粘贴 BV 号或 B站链接，自动拼接',
+                        border: const OutlineInputBorder(),
                         isDense: true,
+                        // 一键读取剪贴板并识别（B站 App 复制 BV 号后直接点这里）
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.content_paste, size: 20),
+                          tooltip: '粘贴并识别',
+                          onPressed: _pasteFromClipboard,
+                        ),
                       ),
-                      onChanged: (v) => _url = v,
                     ),
+                    const SizedBox(height: 6),
+                    Builder(builder: (_) {
+                      // 状态提示行：告知用户当前链接是否已拼接好
+                      if (_url.startsWith('https://www.bilibili.com/video/')) {
+                        return Row(
+                          children: [
+                            Icon(Icons.check_circle,
+                                size: 14, color: Colors.green.shade600),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                'B站完整链接已就绪，到点将直接播放该视频',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.green.shade600),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Text(
+                        '支持：BV 号 / B站链接（含 m 站、深链）/ 其他 http(s) 网址',
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey.shade600),
+                      );
+                    }),
                   ],
                   if (_ct == 'file') ...[
                     const SizedBox(height: 12),
