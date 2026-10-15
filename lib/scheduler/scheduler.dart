@@ -70,6 +70,29 @@ class Scheduler {
     await _initNotifications();
     await _selfTestNotifications();
     await scheduleNext();
+    await _syncSelfHeal();
+  }
+
+  /// 通知原生侧做一次自愈核验：
+  /// 1. 确保心跳自检任务（每 4 小时检查闹钟是否被系统清掉）处于运行状态；
+  /// 2. 补建任何已丢失的闹钟。
+  ///
+  /// 背景：闹钟会在「重启手机 / 覆盖安装新版本 / 被系统强制停止 / ROM 悄悄
+  /// 回收」时被清空，此前只有"用户主动打开 App"能恢复，所以长期不打开就
+  /// 静默失效（用户表现为"用一段时间就不定时播放了，编辑保存又好了"）。
+  /// 现在开机、升级、改系统时间都有广播自愈，这里再补上"每次打开 App 顺手核验"。
+  static Future<void> _syncSelfHeal() async {
+    try {
+      final intent = AndroidIntent(
+        action: 'com.cici.scheduledplayer.SELF_HEAL_SYNC',
+        package: 'com.cici.scheduledplayer',
+        componentName: 'com.cici.scheduledplayer.PlaybackReceiver',
+      );
+      await intent.sendBroadcast();
+      debugPrint('SP-Alarm self-heal sync sent');
+    } catch (e) {
+      debugPrint('SP-Alarm self-heal sync error: $e');
+    }
   }
 
   /// 前台通知自检：启动时用与闹钟提醒相同的渠道发一条测试通知，

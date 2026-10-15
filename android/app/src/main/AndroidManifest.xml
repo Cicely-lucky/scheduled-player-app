@@ -71,15 +71,38 @@
             android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmService"
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false"/>
-        <!-- 重启后恢复闹钟 -->
+        <!-- 重启后恢复闹钟（此前被显式禁用，导致重启后 Dart 侧一次性闹钟不恢复，
+             只能靠用户重新打开 App —— 已改为启用） -->
         <receiver
             android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
             </intent-filter>
         </receiver>
+
+        <!-- 系统事件自愈：重启 / 覆盖安装 / 修改系统时间 / 精确闹钟授权变化后，
+             原生侧直接按持久化规则重建网址闹钟（不需要用户打开 App）。
+             这些广播均为系统保护广播，只有系统可发送，exported 仅为接收必要。 -->
+        <receiver
+            android:name=".AppEventReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.TIME_SET"/>
+                <action android:name="android.intent.action.TIMEZONE_CHANGED"/>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- 心跳自检：每 4 小时确认闹钟是否还在，被 ROM 悄悄清掉时自动补建 -->
+        <service
+            android:name=".SelfHealJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
 
         <!-- 后台自动播放：闹钟回调（Dart）发显式广播 → Receiver 拉起前台服务直接开播，
              无需点击通知（亮屏使用中/锁屏/熄屏均生效） -->

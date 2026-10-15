@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>播放页</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 390px; height: 760px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif; background: #000; }
+.phone { width: 390px; height: 760px; background: #000; border-radius: 44px; overflow: hidden; position: relative; border: 8px solid #1F2937; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
+.screen { width: 374px; height: 744px; padding: 16px 16px 40px; display: flex; flex-direction: column; color: #fff; }
+.top { display: flex; align-items: center; margin-top: 8px; }
+.collapse { font-size: 24px; color: rgba(255,255,255,0.7); width: 40px; }
+.title { flex: 1; text-align: center; font-size: 16px; font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-icon { color: rgba(255,255,255,0.5); font-size: 18px; }
+.spacer { flex: 1; }
+.video-area { width: 100%; aspect-ratio: 16/9; background: #111; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.3); font-size: 14px; margin-bottom: 24px; }
+.timer { font-size: 60px; font-weight: 700; color: #fff; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.subtitle { text-align: center; font-size: 13px; color: rgba(255,255,255,0.38); margin-top: 8px; }
+.lock { align-self: center; margin-bottom: 40px; background: rgba(251,191,36,0.12); border-radius: 999px; padding: 8px 16px; display: flex; align-items: center; color: #FBBF24; font-size: 12.5px; }
+.lock-icon { margin-right: 6px; }
+.controls { display: flex; align-items: center; justify-content: center; gap: 40px; margin-bottom: 20px; }
+.ctrl { font-size: 44px; color: rgba(255,255,255,0.8); }
+.ctrl.stop { color: #FCA5A5; font-size: 50px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="screen">
+    <div class="top">
+      <div class="collapse">⌄</div>
+      <div class="title">英语晨读 30 分钟</div>
+      <div class="type-icon">🎵</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="timer">02:34</div>
+    <div class="subtitle">打开网址</div>
+    <div class="spacer"></div>
+    <div class="lock"><span class="lock-icon">🔒</span>剩余 07:26 后可停止</div>
+    <div class="controls">
+      <div class="ctrl">⏸</div>
+      <div class="ctrl stop">⏹</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

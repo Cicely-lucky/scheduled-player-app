@@ -36,6 +36,10 @@ object UrlAlarmScheduler {
 
     private const val PREFS = "url_alarm_state"
     private const val KEY_IDS = "scheduled_ids"
+    /** 任务完整数据（JSON 数组）：重启/覆盖安装/被系统清理后据此原地重建闹钟，
+     *  不再依赖用户打开 App（此前只存了 id，重建无从下手，这是"用一段时间后
+     *  不再定时播放、手动编辑保存才恢复"的根因之一）。 */
+    private const val KEY_ITEMS = "scheduled_items"
     const val ACTION_OPEN = "com.cici.scheduledplayer.OPEN_URL"
 
     data class Item(
@@ -66,7 +70,127 @@ object UrlAlarmScheduler {
         prefs.edit()
             .putStringSet(KEY_IDS, newIds.map { it.toString() }.toSet())
             .apply()
+        saveItems(context, items)
         Log.d("SP-Alarm", "url alarms synced: ${items.size} scheduled, $cancelled cancelled")
+    }
+
+    /**
+     * 持久化任务完整数据（含重复规则），供重启/升级/被系统清理后原地重建。
+     * 闹钟本身（AlarmManager）在"重启、覆盖安装、应用被强制停止、系统休眠回收"
+     * 四种情况下都会被系统清空，只有把规则留下来才能自愈。
+     */
+    private fun saveItems(context: Context, items: List<Item>) {
+        try {
+            val arr = org.json.JSONArray()
+            for (it in items) {
+                val o = org.json.JSONObject()
+                o.put("id", it.id)
+                o.put("url", it.url)
+                o.put("freq", it.freq)
+                o.put("days", org.json.JSONArray(it.days.toList()))
+                o.put("time", it.time)
+                o.put("date", it.date)
+                arr.put(o)
+            }
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_ITEMS, arr.toString()).apply()
+        } catch (e: Exception) {
+            Log.e("SP-Alarm", "saveItems failed: $e")
+        }
+    }
+
+    /** 读取持久化的任务规则（at 字段用 0 占位，真实时刻每次重算） */
+    fun loadItems(context: Context): List<Item> {
+        return try {
+            val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_ITEMS, null) ?: return emptyList()
+            val arr = org.json.JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val daysArr = o.optJSONArray("days")
+                Item(
+                    id = o.optInt("id", 0),
+                    at = 0L,
+                    url = o.optString("url", ""),
+                    freq = o.optString("freq", "daily"),
+                    days = if (daysArr == null) emptySet()
+                    else (0 until daysArr.length()).map { daysArr.optInt(it) }.toSet(),
+                    time = o.optString("time", "08:00"),
+                    date = o.optString("date", "")
+                )
+            }.filter { it.id != 0 && it.url.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.e("SP-Alarm", "loadItems failed: $e")
+            emptyList()
+        }
+    }
+
+    /**
+     * 全量重建：按持久化规则重新计算下一次触发时刻并注册闹钟。
+     * 调用时机（均不依赖用户打开 App）：
+     * - 手机重启完成后（BOOT_COMPLETED）
+     * - App 覆盖安装/更新后（MY_PACKAGE_REPLACED，安装新版本必清空闹钟）
+     * - 系统时间/时区被修改后（原闹钟基于旧时刻，需重算）
+     * - 精确闹钟权限被授予后（SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED）
+     * - 心跳自检发现闹钟缺失时（SelfHealJob）
+     * @return 重建成功的闹钟数量
+     */
+    fun restoreAll(context: Context): Int {
+        val items = loadItems(context)
+        if (items.isEmpty()) {
+            Log.d("SP-Alarm", "restoreAll: 无持久化任务，跳过")
+            return 0
+        }
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val now = Calendar.getInstance()
+        val alive = mutableListOf<Item>()
+        var ok = 0
+        for (item in items) {
+            val next = nextAtMillis(now, item) ?: continue   // 已过期的一次性任务丢弃
+            scheduleInternal(context, am, item.copy(at = next))
+            alive.add(item)
+            ok++
+            Log.d("SP-Alarm", "restoreAll: #${item.id} -> $next (${item.freq}/${item.time})")
+        }
+        // 回写存活的 id 集合与规则（清理过期项，避免残留空 id）
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putStringSet(KEY_IDS, alive.map { it.id.toString() }.toSet())
+            .apply()
+        saveItems(context, alive)
+        Log.d("SP-Alarm", "restoreAll done: $ok/${items.size} alarms restored")
+        return ok
+    }
+
+    /**
+     * 心跳自检：逐条确认闹钟是否仍在系统里（PendingIntent 是否存在），
+     * 缺失的立即补建；同时把"触发时刻已过但闹钟却没了"的异常情况纠正过来。
+     * 覆盖"闹钟被 ROM 悄悄清掉、但 App 没有被强制停止"这类暗失效。
+     * @return 补建数量
+     */
+    fun verifyAndFix(context: Context): Int {
+        val items = loadItems(context)
+        if (items.isEmpty()) return 0
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val now = Calendar.getInstance()
+        var fixed = 0
+        for (item in items) {
+            val fire = Intent(context, PlaybackReceiver::class.java).apply {
+                action = ACTION_OPEN
+                putExtra("url", item.url)
+            }
+            val exists = PendingIntent.getBroadcast(
+                context, item.id, fire,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            ) != null
+            if (!exists) {
+                val next = nextAtMillis(now, item) ?: continue
+                scheduleInternal(context, am, item.copy(at = next))
+                fixed++
+                Log.d("SP-Alarm", "self-heal: #${item.id} 闹钟丢失，已补建 -> $next")
+            }
+        }
+        if (fixed > 0) Log.d("SP-Alarm", "self-heal: 补建 $fixed 个闹钟")
+        return fixed
     }
 
     private fun scheduleInternal(context: Context, am: AlarmManager, item: Item) {

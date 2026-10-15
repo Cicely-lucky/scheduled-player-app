@@ -119,6 +119,19 @@ class PlaybackReceiver : BroadcastReceiver() {
             return
         }
 
+        // 心跳自检通道：App 每次启动时让原生确认"自检任务在运行 + 闹钟都还在"，
+        // 并补建任何被系统清掉的闹钟（URL 任务的原生链自愈入口）
+        if (intent.action == "com.cici.scheduledplayer.SELF_HEAL_SYNC") {
+            try {
+                SelfHealJob.schedule(context)
+                val fixed = UrlAlarmScheduler.verifyAndFix(context)
+                Log.d("SP-Alarm", "SELF_HEAL_SYNC done, 补建 $fixed 个闹钟")
+            } catch (e: Exception) {
+                Log.e("SP-Alarm", "SELF_HEAL_SYNC failed: $e")
+            }
+            return
+        }
+
         // 网址任务：到点打开（B 站 App / 浏览器）
         // 统一经 UrlBridgeService 前台服务中转：广播接收者里直接 startActivity
         // 会被 AOSP 后台启动拦截（procState=RECEIVER，BAL_BLOCK code=102，
