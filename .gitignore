@@ -12,3 +12,6 @@ get-log.bat
 get-crash.bat
 check_syntax.py
 runs_check.json
+
+# 本地工作目录（软著材料、生成脚本、截图等），不入公开仓库
+.workbuddy/
