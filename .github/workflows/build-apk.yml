@@ -140,10 +140,12 @@ jobs:
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          echo "--- KS_B64 长度: ${#KS_B64} ---"
           if [ -n "$KS_B64" ]; then
             mkdir -p "$HOME/.android"
             printf '%s' "$KS_B64" | base64 -d > "$HOME/.android/debug.keystore"
             echo "--- signing key restored from GitHub Secret (fixed) ---"
+            keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android 2>/dev/null | grep -E "Alias name|SHA256:"
           else
             echo "--- Secret ANDROID_KEYSTORE_BASE64 not set, fallback to cache ---"
           fi
