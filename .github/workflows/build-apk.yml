@@ -150,6 +150,10 @@ jobs:
           echo "--- permanent keystore restored into project dir ---"
 
       - name: 配置 release 签名显式指向固定密钥（改写 build.gradle）
+        # 姿势要点（Run #42 失败教训）：Groovy 按顺序求值，
+        # signingConfigs.release 必须声明在 buildTypes 引用它之前；
+        # 「文件末尾追加 android{} 块」会让模板处的引用变成悬空引用，
+        # Gradle 配置阶段直接抛 unknown property 'release'。
         run: |
           python3 - <<'EOF'
           import os
@@ -160,13 +164,8 @@ jobs:
           if os.path.exists(groovy):
               s = open(groovy).read()
               if 'fixed-release.keystore' not in s:
-                  # 模板 release 默认 signingConfig = signingConfigs.debug，换成固定密钥
-                  if 'signingConfig = signingConfigs.debug' in s:
-                      s = s.replace('signingConfig = signingConfigs.debug',
-                                    'signingConfig = signingConfigs.release')
-                  # 末尾追加签名配置块（Gradle 多个 android{} 块按属性合并，不冲突）
-                  s += (
-                      "\nandroid {\n"
+                  # 插入位置：buildTypes 之前（先声明，后引用）
+                  sig_block = (
                       "    signingConfigs {\n"
                       "        release {\n"
                       "            storeFile file('fixed-release.keystore')\n"
@@ -174,26 +173,29 @@ jobs:
                       "            keyAlias 'androiddebugkey'\n"
                       "            keyPassword 'android'\n"
                       "        }\n"
-                      "    }\n"
-                      "    buildTypes {\n"
-                      "        release {\n"
-                      "            signingConfig signingConfigs.release\n"
-                      "        }\n"
-                      "    }\n"
-                      "}\n"
+                      "    }\n\n"
                   )
+                  anchor = s.find('    buildTypes {')
+                  if anchor < 0:
+                      raise SystemExit('!! build.gradle 中找不到 buildTypes 锚点，拒绝静默换钥匙')
+                  s = s[:anchor] + sig_block + s[anchor:]
+                  # 声明已在前方，现在替换引用才安全
+                  if 'signingConfig = signingConfigs.debug' in s:
+                      s = s.replace('signingConfig = signingConfigs.debug',
+                                    'signingConfig = signingConfigs.release')
+                  else:
+                      raise SystemExit('!! build.gradle 中未找到 debug 签名引用，拒绝静默换钥匙')
                   open(groovy, 'w').write(s)
-              print('--- groovy build.gradle signing (tail) ---')
-              print(open(groovy).read()[-460:])
+              s = open(groovy).read()
+              print('--- groovy build.gradle signing ---')
+              i = s.find('signingConfigs')
+              if i >= 0:
+                  print(s[i:i + 420])
 
           if os.path.exists(kts):
               s = open(kts).read()
               if 'fixed-release.keystore' not in s:
-                  if 'signingConfig = signingConfigs.debug' in s:
-                      s = s.replace('signingConfig = signingConfigs.debug',
-                                    'signingConfig = signingConfigs.getByName("release")')
-                  s += (
-                      "\nandroid {\n"
+                  sig_block = (
                       "    signingConfigs {\n"
                       "        create(\"release\") {\n"
                       "            storeFile = file(\"fixed-release.keystore\")\n"
@@ -201,17 +203,23 @@ jobs:
                       "            keyAlias = \"androiddebugkey\"\n"
                       "            keyPassword = \"android\"\n"
                       "        }\n"
-                      "    }\n"
-                      "    buildTypes {\n"
-                      "        release {\n"
-                      "            signingConfig = signingConfigs.getByName(\"release\")\n"
-                      "        }\n"
-                      "    }\n"
-                      "}\n"
+                      "    }\n\n"
                   )
+                  anchor = s.find('buildTypes')
+                  if anchor < 0:
+                      raise SystemExit('!! build.gradle.kts 中找不到 buildTypes 锚点，拒绝静默换钥匙')
+                  s = s[:anchor] + sig_block + s[anchor:]
+                  if 'signingConfig = signingConfigs.debug' in s:
+                      s = s.replace('signingConfig = signingConfigs.debug',
+                                    'signingConfig = signingConfigs.getByName(\"release\")')
+                  else:
+                      raise SystemExit('!! build.gradle.kts 中未找到 debug 签名引用，拒绝静默换钥匙')
                   open(kts, 'w').write(s)
-              print('--- kts build.gradle.kts signing (tail) ---')
-              print(open(kts).read()[-460:])
+              s = open(kts).read()
+              print('--- kts build.gradle.kts signing ---')
+              i = s.find('signingConfigs')
+              if i >= 0:
+                  print(s[i:i + 420])
           EOF
 
       - name: 构建 Release APK
