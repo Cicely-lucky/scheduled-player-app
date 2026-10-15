@@ -226,18 +226,31 @@ jobs:
         run: flutter build apk --release
 
       - name: 验证 APK 签名指纹（不符则构建失败，绝不静默交付错签名）
+        # Run #43 教训：sed 's/^SHA256: *//' 的 ^ 锚定行首，而 keytool 输出的
+        # 指纹行永远带前导缩进（"          SHA256: AA:BB:..."），替换永不生效，
+        # FP 残留标签字样（"SHa256 aabb..."）→ 校验永远误报失败，好包被拦红。
+        # 修复：awk 取「含 SHA256: 的行」的最后一个空白分隔字段，免疫缩进。
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
-          FP=$(keytool -printcert -jarfile "$APK" 2>/dev/null | grep 'SHA256:' | head -1 | sed 's/^SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f')
+          RAW=$(keytool -printcert -jarfile "$APK" 2>/dev/null)
+          FP=$(printf '%s\n' "$RAW" | awk '/SHA256:/ {fp=$NF; gsub(/:/, "", fp); print tolower(fp); exit}')
           echo "APK 证书 SHA256 : $FP"
           echo "期望     SHA256 : b18d133f3384154e578a27dfdde14d1fe8b9fe981ce84d055e864ff5ba54c49d"
+          if [ -z "$FP" ]; then
+            echo "!!! 未提取到指纹（v1 签名缺失或 keytool 失败），keytool 原始输出："
+            printf '%s\n' "$RAW"
+            exit 1
+          fi
           if [ "$FP" != "b18d133f3384154e578a27dfdde14d1fe8b9fe981ce84d055e864ff5ba54c49d" ]; then
-            echo "!!! APK 签名指纹不符，构建失败 !!!"
+            echo "!!! APK 签名指纹不符，构建失败。证书信息（Owner 出现 CN=Android Debug 即现场随机钥匙）："
+            printf '%s\n' "$RAW" | grep -E 'Owner:|SHA256:|Signer' || true
             exit 1
           fi
           echo "=== APK 签名验证通过（永久密钥已生效）==="
 
       - name: 上传 APK 产物
+        # 校验失败也上传（!cancelled）：万一防线拦下错包，产物留在云端可下载取证
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
