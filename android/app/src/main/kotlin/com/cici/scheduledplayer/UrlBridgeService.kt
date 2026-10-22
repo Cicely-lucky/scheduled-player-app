@@ -1,12 +1,16 @@
 package com.cici.scheduledplayer
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.PowerManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -15,7 +19,7 @@ import android.os.Looper
 import android.util.Log
 
 /**
- * 网址任务自动打开的前台服务桥（BAL 豁免的跳板）。
+ * 网址任务自动打开的前台服务桥（BAL 豁免的跳板 + 亮屏保活）。
  *
  * 链路：闹钟/定时器到点 → PlaybackReceiver（广播）→ startForegroundService 拉起本服务
  * → startForeground 转正 → 拉起 UrlBridgeActivity（showWhenLocked + turnScreenOn，
@@ -33,8 +37,16 @@ import android.util.Log
  * MIUI KeyguardLocked 拦截——所以目标必须由带 showWhenLocked 的自家 Activity
  * （UrlBridgeActivity）发起，本服务只做拉起跳板。
  *
- * 前台服务启动合法性：精确闹钟（setAlarmClock）触发后 App 处于系统临时白名单
- * （temporaryAppAllowlistDuration=10000），Android 12+ 允许从广播接收者拉起前台服务。
+ * 2026-10-22 新增【亮屏保活】：晨间实测（无安全锁、锁屏过夜场景）整条链路
+ * 全通、B站成功冷启动到目标视频页，但之后无人触屏 → 系统到达熄屏超时
+ * （短至十几秒）→ B站随熄屏立即暂停 → 用户醒来只见"停在视频页没播起来"。
+ * 修复：非安全锁且触发时处于锁屏的场景，打开目标后由本服务持有
+ * SCREEN_BRIGHT_WAKE_LOCK 保持亮屏（默认 30 分钟），为 B站 自动起播并持续
+ * 播放兜底（B站播放中自带 FLAG_KEEP_SCREEN_ON，此锁主要保起播前空窗 +
+ * 意外熄屏）。三种提前收摊信号：用户按电源键熄屏 / 点通知"提前结束" /
+ * 超时自动释放（acquire(timeout) 双保险，即使收摊逻辑被 ROM 干扰也不超时）。
+ * 安全锁（PIN/指纹）下 B站只能压在锁屏之下不会自动播，亮屏徒耗电，维持
+ * 原 3 秒过渡收摊行为；触发时已解锁亮屏（用户在场测试）同样不需要保活。
  */
 class UrlBridgeService : Service() {
 
@@ -42,13 +54,38 @@ class UrlBridgeService : Service() {
         const val EXTRA_URL = "url"
         const val CHANNEL_ID = "url_bridge_channel"
         const val NOTIF_ID = 20002
+        const val ACTION_STOP = "com.cici.scheduledplayer.URL_BRIDGE_STOP"
+
+        /** 非安全锁场景：打开目标后保持亮屏的时长（分钟），到时自动收摊 */
+        const val KEEP_SCREEN_MINUTES = 30L
+
+        /** 无保活场景下，短暂保持前台保证目标 App 启动过渡完成的时长 */
+        const val TRANSITION_MS = 3_000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var holdingScreen = false
+
+    /** 用户按电源键主动熄屏 = 明确的停止信号：立即释放亮屏锁并收摊 */
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                Log.d("SP-Alarm", "UrlBridgeService: screen off -> stop early")
+                stopBridge()
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 常驻通知的"提前结束"入口：释放亮屏锁并收摊
+        if (intent?.action == ACTION_STOP) {
+            stopBridge()
+            return START_NOT_STICKY
+        }
+
         val raw = intent?.getStringExtra(EXTRA_URL) ?: ""
         val url = PlaybackReceiver.extractUrlCompat(raw)
         if (url.isEmpty()) {
@@ -58,8 +95,18 @@ class UrlBridgeService : Service() {
         }
         Log.d("SP-Alarm", "UrlBridgeService onStartCommand, url=$url")
 
+        // 亮屏保活的适用判定（只对"非安全锁 + 触发时处于锁屏"启用）：
+        // - 安全锁：B站压在锁屏之下不会自动播，亮屏无意义，省电走原逻辑；
+        // - 触发时已解锁（用户在场）：B站前台自动播且自带 keep-screen-on。
+        val km = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+        val keepScreen = km != null && km.isKeyguardLocked && !km.isKeyguardSecure
+        Log.d(
+            "SP-Alarm",
+            "UrlBridgeService keepScreen=$keepScreen (locked=${km?.isKeyguardLocked}, secure=${km?.isKeyguardSecure})"
+        )
+
         // 立即转前台：进程状态变 FOREGROUND_SERVICE
-        startForegroundCompat(buildNotification())
+        startForegroundCompat(buildNotification(keepScreen))
 
         // 拉起锁屏可见的中转 Activity：BAL 由悬浮窗豁免放行，
         // Activity 带 showWhenLocked/turnScreenOn 绕过 MIUI 锁屏拦截
@@ -72,14 +119,75 @@ class UrlBridgeService : Service() {
         } catch (e: Exception) {
             Log.e("SP-Alarm", "UrlBridgeService launch activity failed: $e")
             PlaybackReceiver.showUrlFallbackNotification(this, url)
+            handler.postDelayed({ stopSelf() }, TRANSITION_MS)
+            return START_NOT_STICKY
         }
 
-        // 短暂保持前台保证启动过渡完成，然后收摊（通知随之消失）
-        handler.postDelayed({
-            stopForegroundCompat()
-            stopSelf()
-        }, 3_000L)
+        if (keepScreen) {
+            holdScreenOn()
+        } else {
+            // 短暂保持前台保证启动过渡完成，然后收摊（通知随之消失）
+            handler.postDelayed({ stopSelf() }, TRANSITION_MS)
+        }
         return START_NOT_STICKY
+    }
+
+    /**
+     * 持亮屏锁并常驻前台，直到超时 / 用户熄屏 / 点通知结束。
+     * acquire(timeout) 是兜底双保险：即使后续收摊逻辑因 ROM 怪癖没执行，
+     * 到时也会自动释放，绝不会永久霸占亮屏。
+     */
+    private fun holdScreenOn() {
+        holdingScreen = true
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION") // SCREEN_BRIGHT 系列 API 已废弃但持续有效，
+            // 且这是第三方 App 替其他 App（B站）保持亮屏的唯一手段
+            wakeLock = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "scheduledplayer:url_keep_screen"
+            ).also {
+                it.setReferenceCounted(false)
+                it.acquire(KEEP_SCREEN_MINUTES * 60_000L)
+            }
+            Log.d("SP-Alarm", "UrlBridgeService holding screen ${KEEP_SCREEN_MINUTES}min")
+        } catch (e: Exception) {
+            Log.e("SP-Alarm", "wakeLock acquire failed: $e")
+        }
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(screenOffReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(screenOffReceiver, filter)
+        }
+        handler.postDelayed({ stopBridge() }, KEEP_SCREEN_MINUTES * 60_000L)
+    }
+
+    /** 统一收摊：撤定时器、释放亮屏锁、注销接收器、停服务 */
+    private fun stopBridge() {
+        handler.removeCallbacksAndMessages(null)
+        releaseWakeLock()
+        if (holdingScreen) {
+            holdingScreen = false
+            try { unregisterReceiver(screenOffReceiver) } catch (_: Exception) {}
+        }
+        stopSelf()
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.takeIf { it.isHeld }?.release()
+        } catch (_: Exception) {}
+        wakeLock = null
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        releaseWakeLock()
+        if (holdingScreen) {
+            try { unregisterReceiver(screenOffReceiver) } catch (_: Exception) {}
+        }
+        super.onDestroy()
     }
 
     private fun startForegroundCompat(notification: Notification) {
@@ -94,16 +202,7 @@ class UrlBridgeService : Service() {
         }
     }
 
-    private fun stopForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= 24) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-    }
-
-    private fun buildNotification(): Notification {
+    private fun buildNotification(keepScreen: Boolean): Notification {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
@@ -116,11 +215,21 @@ class UrlBridgeService : Service() {
         }
         val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
-        val contentIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
-            piFlags
-        )
+        // 亮屏保活期间：点通知 = 提前结束（释放亮屏锁收摊）；
+        // 其余场景保持原样：点通知回 App 主页。
+        val contentIntent = if (keepScreen) {
+            PendingIntent.getService(
+                this, 1,
+                Intent(this, UrlBridgeService::class.java).setAction(ACTION_STOP),
+                piFlags
+            )
+        } else {
+            PendingIntent.getActivity(
+                this, 0,
+                Intent(this, MainActivity::class.java),
+                piFlags
+            )
+        }
         val builder = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -130,7 +239,10 @@ class UrlBridgeService : Service() {
         return builder
             .setSmallIcon(android.R.drawable.ic_menu_share)
             .setContentTitle("定时任务")
-            .setContentText("正在打开链接…")
+            .setContentText(
+                if (keepScreen) "正在自动播放，屏幕保持亮起（点按提前结束）"
+                else "正在打开链接…"
+            )
             .setOngoing(true)
             .setContentIntent(contentIntent)
             .build()
