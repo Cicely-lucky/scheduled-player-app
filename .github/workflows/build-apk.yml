@@ -223,7 +223,24 @@ jobs:
           EOF
 
       - name: 构建 Release APK
-        run: flutter build apk --release
+        # 2026-10-23 排障增强（Run#45/#46 教训）：构建失败时提取 Kotlin/Gradle
+        # 错误关键行，并转成 ::error:: annotation——GitHub 把它挂在 run 页面，
+        # 且匿名 annotations API 可读，排障不再依赖登录网页翻日志。
+        run: |
+          set +e
+          flutter build apk --release 2>&1 | tee /tmp/build_full.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "===== flutter build 失败（exit $RC），错误关键行 ====="
+            grep -nE "^e: |error: |FAILURE|What went wrong|Caused by" /tmp/build_full.log | head -40 || true
+            echo "===== 日志尾部 60 行 ====="
+            tail -60 /tmp/build_full.log || true
+            grep -E "^e: " /tmp/build_full.log | head -15 | while IFS= read -r line; do
+              echo "::error::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-250)"
+            done
+            exit 1
+          fi
 
       - name: 验证 APK 签名指纹（不符则构建失败，绝不静默交付错签名）
         # Run #43 教训：sed 's/^SHA256: *//' 的 ^ 锚定行首，而 keytool 输出的
