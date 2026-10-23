@@ -141,22 +141,25 @@ class UrlBridgeService : Service() {
         holdingScreen = true
         try {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
-            @Suppress("DEPRECATION") // SCREEN_BRIGHT 系列 API 已废弃但持续有效，
-            // 且这是第三方 App 替其他 App（B站）保持亮屏的唯一手段
-            wakeLock = pm.newWakeLock(
+            // SCREEN_BRIGHT 系列 API 已废弃但持续有效，且是第三方 App
+            // 替其他 App（B站）保持亮屏的唯一手段。
+            // 注意：@Suppress 只能修饰声明（局部 val），不能挂在赋值语句上
+            // （2026-10-23 Run#45 编译失败实锤，CI 修复）。
+            @Suppress("DEPRECATION")
+            val wl = pm.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "scheduledplayer:url_keep_screen"
-            ).also {
-                it.setReferenceCounted(false)
-                it.acquire(KEEP_SCREEN_MINUTES * 60_000L)
-            }
+            )
+            wl.setReferenceCounted(false)
+            wl.acquire(KEEP_SCREEN_MINUTES * 60_000L)
+            wakeLock = wl
             Log.d("SP-Alarm", "UrlBridgeService holding screen ${KEEP_SCREEN_MINUTES}min")
         } catch (e: Exception) {
             Log.e("SP-Alarm", "wakeLock acquire failed: $e")
         }
         val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(screenOffReceiver, filter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(screenOffReceiver, filter)
         }
@@ -202,6 +205,9 @@ class UrlBridgeService : Service() {
         }
     }
 
+    // @Suppress 修饰函数声明（合法）；else 分支的两参 Builder 仅为 API<26 准备，
+    // 不能把注解写在 if/else 的表达式上（Run#45 编译失败实锤，CI 修复）。
+    @Suppress("DEPRECATION")
     private fun buildNotification(keepScreen: Boolean): Notification {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
@@ -233,7 +239,6 @@ class UrlBridgeService : Service() {
         val builder = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
-            @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
         return builder
