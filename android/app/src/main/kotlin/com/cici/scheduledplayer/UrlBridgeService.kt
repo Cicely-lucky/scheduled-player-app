@@ -47,6 +47,12 @@ import android.util.Log
  * 超时自动释放（acquire(timeout) 双保险，即使收摊逻辑被 ROM 干扰也不超时）。
  * 安全锁（PIN/指纹）下 B站只能压在锁屏之下不会自动播，亮屏徒耗电，维持
  * 原 3 秒过渡收摊行为；触发时已解锁亮屏（用户在场测试）同样不需要保活。
+ *
+ * 2026-10-25 根因修正：实测 isKeyguardSecure() 在 HyperOS 上误报 true
+ * （滑动锁 + B站前台正常播放的条件下），导致保活分支从未进入、亮屏
+ * 12 秒即灭、播放 19 秒即断。判定改为「触发时屏幕熄灭」（PowerManager
+ * .isInteractive），不再信任 keyguard 标志；另加每分钟唤醒锁自查续命，
+ * 防 ROM 剥离。安全锁下持屏意义降低，但宁可多保 30 分钟也不重蹈覆辙。
  */
 class UrlBridgeService : Service() {
 
@@ -63,6 +69,9 @@ class UrlBridgeService : Service() {
 
         /** 无保活场景下，短暂保持前台保证目标 App 启动过渡完成的时长 */
         const val TRANSITION_MS = 3_000L
+
+        /** 亮屏锁续命间隔：ROM 若剥离无人值守 App 的屏幕唤醒锁，周期性重持兜底 */
+        const val RENEW_INTERVAL_MS = 60_000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -76,6 +85,24 @@ class UrlBridgeService : Service() {
                 Log.d("SP-Alarm", "UrlBridgeService: screen off -> stop early")
                 stopBridge()
             }
+        }
+    }
+
+    /** 亮屏锁续命：ROM 可能剥离无人值守 App 的屏幕唤醒锁，每分钟自查、掉了重持 */
+    private val renewRunnable: Runnable = object : Runnable {
+        override fun run() {
+            val wl = wakeLock
+            if (wl != null) {
+                try {
+                    if (!wl.isHeld) {
+                        wl.acquire(KEEP_SCREEN_MINUTES * 60_000L)
+                        Log.d("SP-Alarm", "UrlBridgeService re-acquired screen wake lock")
+                    }
+                } catch (e: Exception) {
+                    Log.e("SP-Alarm", "wakeLock re-acquire failed: $e")
+                }
+            }
+            handler.postDelayed(this, RENEW_INTERVAL_MS)
         }
     }
 
@@ -97,14 +124,19 @@ class UrlBridgeService : Service() {
         }
         Log.d("SP-Alarm", "UrlBridgeService onStartCommand, url=$url")
 
-        // 亮屏保活的适用判定（只对"非安全锁 + 触发时处于锁屏"启用）：
-        // - 安全锁：B站压在锁屏之下不会自动播，亮屏无意义，省电走原逻辑；
-        // - 触发时已解锁（用户在场）：B站前台自动播且自带 keep-screen-on。
+        // 亮屏保活的适用判定（2026-10-25 根因修正）：触发时屏幕熄灭 = 无人值守，
+        // 必须持亮屏锁替 B站兜底。不再依据 isKeyguardLocked/isKeyguardSecure——
+        // HyperOS 的 isKeyguardSecure() 会误报（2026-10-25 08:00 电池历史实锤：
+        // 滑动锁、B站正常前台播放，但 keepScreen=false，亮屏 12 秒后熄屏、
+        // 播放 19 秒即中断）。keyguard 两标志仅保留在日志里供诊断。
+        // 触发时屏幕已亮（用户在场）：无需保活，维持原 3 秒过渡收摊。
         val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val pmNow = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val interactive = pmNow?.isInteractive ?: true
         val keyguardLocked = km?.isKeyguardLocked ?: false
         val keyguardSecure = km?.isKeyguardSecure ?: false
-        val keepScreen = keyguardLocked && !keyguardSecure
-        Log.d("SP-Alarm", "UrlBridgeService keepScreen=$keepScreen (locked=$keyguardLocked, secure=$keyguardSecure)")
+        val keepScreen = !interactive
+        Log.d("SP-Alarm", "UrlBridgeService keepScreen=$keepScreen (interactive=$interactive, locked=$keyguardLocked, secure=$keyguardSecure)")
 
         // 立即转前台：进程状态变 FOREGROUND_SERVICE
         startForegroundCompat(buildNotification(keepScreen))
@@ -164,6 +196,7 @@ class UrlBridgeService : Service() {
         } else {
             registerReceiver(screenOffReceiver, filter)
         }
+        handler.postDelayed(renewRunnable, RENEW_INTERVAL_MS)
         handler.postDelayed({ stopBridge() }, KEEP_SCREEN_MINUTES * 60_000L)
     }
 
