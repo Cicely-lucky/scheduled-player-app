@@ -53,6 +53,15 @@ import android.util.Log
  * 12 秒即灭、播放 19 秒即断。判定改为「触发时屏幕熄灭」（PowerManager
  * .isInteractive），不再信任 keyguard 标志；另加每分钟唤醒锁自查续命，
  * 防 ROM 剥离。安全锁下持屏意义降低，但宁可多保 30 分钟也不重蹈覆辙。
+ *
+ * 2026-10-25 11:41 复测实锤（logcat 原文）：新判定已生效（keepScreen=true）、
+ * 唤醒锁成功获取，但 HyperOS 在 ~7 秒后将其标记 DISABLED（PowerManager
+ * ServiceImpl dump: "...url_keep_screen' ACQUIRE_CAUSES_WAKEUP DISABLED"），
+ * 无人触屏的程序化亮屏 ~12 秒后仍被强制熄灭进 AOD——**唤醒锁路线在
+ * MIUI 上彻底证伪，续命 Runnable 无从救起（DISABLED 状态下 isHeld 仍为
+ * true，客户端无从感知）**。主保屏机制移交 UrlBridgeActivity 的面纱窗口
+ * （FLAG_KEEP_SCREEN_ON，锁屏之上持续可见），本服务唤醒锁降级为其他
+ * ROM 的兼容兜底；keepAlive 标志随 intent 传给面纱，收摊时广播通知。
  */
 class UrlBridgeService : Service() {
 
@@ -142,13 +151,15 @@ class UrlBridgeService : Service() {
         startForegroundCompat(buildNotification(keepScreen))
 
         // 拉起锁屏可见的中转 Activity：BAL 由悬浮窗豁免放行，
-        // Activity 带 showWhenLocked/turnScreenOn 绕过 MIUI 锁屏拦截
+        // Activity 带 showWhenLocked/turnScreenOn 绕过 MIUI 锁屏拦截；
+        // keepScreen 场景传 keepAlive，面纱窗口常驻锁屏之上保屏（主机制）
         try {
             val act = Intent(this, UrlBridgeActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 .putExtra(UrlBridgeActivity.EXTRA_URL, url)
+                .putExtra(UrlBridgeActivity.EXTRA_KEEP_ALIVE, keepScreen)
             startActivity(act)
-            Log.d("SP-Alarm", "UrlBridgeService -> UrlBridgeActivity launched")
+            Log.d("SP-Alarm", "UrlBridgeService -> UrlBridgeActivity launched (keepAlive=$keepScreen)")
         } catch (e: Exception) {
             Log.e("SP-Alarm", "UrlBridgeService launch activity failed: $e")
             PlaybackReceiver.showUrlFallbackNotification(this, url)
@@ -200,12 +211,21 @@ class UrlBridgeService : Service() {
         handler.postDelayed({ stopBridge() }, KEEP_SCREEN_MINUTES * 60_000L)
     }
 
-    /** 统一收摊：撤定时器、释放亮屏锁、注销接收器、停服务 */
+    /** 统一收摊：撤定时器、释放亮屏锁、通知面纱收摊、注销接收器、停服务 */
     private fun stopBridge() {
         handler.removeCallbacksAndMessages(null)
         releaseWakeLock()
         if (holdingScreen) {
             holdingScreen = false
+            // 面纱（UrlBridgeActivity 保活窗口）一并收摊：
+            // 点通知提前结束 / 熄屏 / 30 分钟超时都会走到这里
+            try {
+                sendBroadcast(
+                    Intent(UrlBridgeActivity.ACTION_VEIL_FINISH).setPackage(packageName)
+                )
+            } catch (e: Exception) {
+                Log.d("SP-Alarm", "send veil finish broadcast failed: $e")
+            }
             try {
                 unregisterReceiver(screenOffReceiver)
             } catch (e: IllegalArgumentException) {

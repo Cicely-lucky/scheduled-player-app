@@ -124,8 +124,9 @@
         <!-- 锁屏可见的透明中转 Activity：由 UrlBridgeService 拉起（BAL 由悬浮窗
              豁免放行），showWhenLocked+turnScreenOn 让它盖在锁屏之上（系统闹钟
              同款机制），再由它打开目标 App——绕过 MIUI KeyguardLocked 拦截。
-             17:25 实测：服务直接 startActivity 目标 App 虽过 BAL 但被
-             「Permission Denied Activity KeyguardLocked」拦下（result code=102）。 -->
+             2026-10-25 11:41 实测：noHistory="true" 会在 B站任务切到前台的
+             ~0.5 秒内把本 Activity 悄悄 finish（早于自身 2.5s 定时），保活
+             面纱根本活不到设计时长——已移除。收摊由面纱自身收摊信号负责。 -->
         <activity
             android:name=".UrlBridgeActivity"
             android:exported="false"
@@ -135,7 +136,6 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize"/>
